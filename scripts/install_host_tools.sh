@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 [[ "$(uname -s)" == "Linux" ]] || {
   echo "此脚本只能在 Ubuntu 22.04 中运行。" >&2

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 
 source /workspace/scripts/in_container/common.sh
 cd "${RAICOM_DIR}/example/py"
