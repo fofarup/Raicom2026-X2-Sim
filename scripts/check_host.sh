@@ -24,6 +24,13 @@ check_equal "Ubuntu 版本" "${VERSION_ID:-unknown}" "22.04"
 check_equal "CPU 架构" "$(uname -m)" "x86_64"
 check_equal "桌面会话" "${XDG_SESSION_TYPE:-unknown}" "x11"
 
+if [[ -n "${DISPLAY:-}" ]]; then
+  printf '[通过] %-22s %s\n' "DISPLAY" "${DISPLAY}"
+else
+  echo "[失败] DISPLAY 未设置，MuJoCo 图形窗口无法显示。"
+  failures=$((failures + 1))
+fi
+
 for cmd in git git-lfs docker tmux xhost sha256sum tar; do
   if command -v "${cmd}" >/dev/null 2>&1; then
     printf '[通过] %-22s %s\n' "${cmd}" "$(command -v "${cmd}")"

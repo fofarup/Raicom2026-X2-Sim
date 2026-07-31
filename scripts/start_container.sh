@@ -37,8 +37,9 @@ docker_args=(
   --env "QT_X11_NO_MITSHM=1"
   --env "ROS_DOMAIN_ID=${ROS_DOMAIN_ID}"
   --env "RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION}"
-  --volume "/tmp/.X11-unix:/tmp/.X11-unix:rw"
+  --volume "/tmp:/tmp"
   --volume "/dev/input:/dev/input"
+  --volume "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro"
   --volume "${PROJECT_ROOT}:/workspace"
   --workdir /workspace
 )
