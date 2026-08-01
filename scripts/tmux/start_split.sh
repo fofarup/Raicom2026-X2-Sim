@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# X2 仿真分屏启动 — 单窗口三面板
+# X2 仿真分屏启动 — 单窗口三面板，每个面板都自动进入 Docker 容器
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,8 +10,6 @@ source "${SCRIPT_DIR}/../lib/common.sh"
 
 # xhost 权限
 xhost +local:docker >/dev/null 2>&1 || true
-
-# 确保 xhost 对所有容器开放
 xhost + >/dev/null 2>&1 || true
 
 # 如果已有同名 tmux 会话，直接接入
@@ -19,36 +17,35 @@ if tmux has-session -t "${TMUX_SESSION}" 2>/dev/null; then
   exec tmux attach-session -t "${TMUX_SESSION}"
 fi
 
-TMUX="${TMUX_SESSION}"
+# ---- 创建会话 ----
+tmux new-session -d -s "${TMUX_SESSION}" -n "X2-Sim" \
+  "docker exec -it ${DOCKER_CONTAINER} bash -lc '/workspace/scripts/in_container/start_sim.sh; exec bash'"
 
-# 会话主窗口
-tmux new-session -d -s "${TMUX}" -n "X2-Sim"
+# ---- MC 窗格 ----
+tmux split-window -h -t "${TMUX_SESSION}:0.0" \
+  "sleep 3; docker exec -it ${DOCKER_CONTAINER} bash -lc '/workspace/scripts/in_container/start_mc.sh; exec bash'"
 
-# 窗格 0：仿真（大窗格，上方/左方）
-tmux send-keys -t "${TMUX}:0.0" \
-  "echo '🖥️  启动 MuJoCo 仿真...'" Enter
-sleep 0.5
-tmux send-keys -t "${TMUX}:0.0" \
-  "docker exec -it ${DOCKER_CONTAINER} bash -lc '/workspace/scripts/in_container/start_sim.sh'" Enter
-
-# 右侧垂直分割 → 窗格 1：MC
-sleep 2
-tmux split-window -h -t "${TMUX}:0.0"
-tmux send-keys -t "${TMUX}:0.1" \
-  "echo '🔧 启动 MC 运动控制...'" Enter
-sleep 0.5
-tmux send-keys -t "${TMUX}:0.1" \
-  "sleep 3; docker exec -it ${DOCKER_CONTAINER} bash -lc '/workspace/scripts/in_container/start_mc.sh'" Enter
-
-# 下方水平分割窗格 0 → 窗格 2：控制终端
-tmux split-window -v -t "${TMUX}:0.0"
-tmux send-keys -t "${TMUX}:0.2" \
-  "sleep 6; docker exec -it ${DOCKER_CONTAINER} bash -lc 'source /workspace/scripts/in_container/common.sh; echo \"\"; echo \"╔══════════════════════════════════════════╗\"; echo \"║  🎮  控制终端就绪                       ║\"; echo \"╠══════════════════════════════════════════╣\"; echo \"║  1. cd /workspace/.runtime/raicom2026/example/py\"; echo \"║  2. python3 set_mode.py SD               ║\"; echo \"║  3. 👉 去 MuJoCo 窗口点击 Reset         ║\"; echo \"║  4. python3 set_mode.py LD               ║\"; echo \"║  5. cd /workspace/control                ║\"; echo \"║  6. python3 safe_forward.py --speed 0.1 --duration 2\"; echo \"╚══════════════════════════════════════════╝\"; echo \"\"; exec bash'" Enter
+# ---- 控制终端窗格 ----
+tmux split-window -v -t "${TMUX_SESSION}:0.0" \
+  "sleep 6; docker exec -it ${DOCKER_CONTAINER} bash -lc '
+source /workspace/scripts/in_container/common.sh 2>/dev/null
+echo \"\"
+echo \"╔══════════════════════════════════════╗\"
+echo \"║  🎮  控制终端就绪（已在容器内）     ║\"
+echo \"╠══════════════════════════════════════╣\"
+echo \"║  1. bash /workspace/control/stand.sh ║\"
+echo \"║  2. 👉 去 MuJoCo 点 Reset           ║\"
+echo \"║  3. bash /workspace/control/ready.sh ║\"
+echo \"║  4. bash /workspace/control/go.sh    ║\"
+echo \"╚══════════════════════════════════════╝\"
+echo \"\"
+exec bash
+'"
 
 # 调整大小
-tmux resize-pane -t "${TMUX}:0.2" -D 12
+tmux resize-pane -t "${TMUX_SESSION}:0.2" -D 12
 
 # 聚焦到仿真窗格
-tmux select-pane -t "${TMUX}:0.0"
+tmux select-pane -t "${TMUX_SESSION}:0.0"
 
-exec tmux attach-session -t "${TMUX}"
+exec tmux attach-session -t "${TMUX_SESSION}"
