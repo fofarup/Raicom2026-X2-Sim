@@ -1,91 +1,96 @@
-"""视觉抽象层。
-
-仿真模式(--sim)：从本地 resources/numbers/ 随机选图片，OCR 识别
-真机模式：摄像头 + CV 模型
-"""
+"""数字/颜色视觉识别（完全离线）。"""
+from __future__ import annotations
 
 import os
-import random
-
+from pathlib import Path
+import numpy as np
+from PIL import Image
 from rclpy.node import Node
 
-RESOURCES_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "resources", "numbers"
-)
+RESOURCES_DIR = Path(__file__).resolve().parents[1] / "resources" / "numbers"
+COLOR_PALETTE = {
+    "粉色": (216, 27, 96), "青色": (0, 172, 193), "绿色": (67, 160, 71),
+    "黄色": (249, 168, 37), "紫色": (142, 36, 170), "深橙色": (244, 81, 30),
+    "蓝绿色": (0, 137, 123), "蓝色": (30, 136, 229), "浅蓝色": (3, 155, 229),
+    "红色": (229, 57, 53), "深紫色": (94, 53, 177), "靛蓝色": (57, 73, 171),
+    "黄绿色": (192, 202, 51), "橙色": (251, 140, 0), "浅绿色": (124, 179, 66),
+}
+DIGIT_FILE_RANGES = {
+    0: range(1, 7), 1: range(7, 14), 2: range(14, 20), 3: range(20, 25),
+    4: range(25, 31), 5: range(31, 39), 6: range(39, 45),
+    7: range(45, 51), 8: range(51, 56), 9: range(56, 64),
+}
+
+
+def expected_digit_for_filename(path: str | os.PathLike[str]) -> int:
+    """官方样图标签。只在建立模板库和测试时读取，不参与待测图推理。"""
+    number = int(Path(path).stem.rsplit("_", 1)[1])
+    for digit, numbers in DIGIT_FILE_RANGES.items():
+        if number in numbers:
+            return digit
+    raise ValueError(f"不是官方数字样图编号: {path}")
+
+
+def _foreground(rgb: np.ndarray, threshold: float = 35.0) -> np.ndarray:
+    mask = np.linalg.norm(255.0 - rgb.astype(np.float32), axis=2) > threshold
+    if not mask.any():
+        raise ValueError("图像中没有检测到数字前景")
+    return mask
+
+
+def normalized_glyph(image: Image.Image, size: int = 64) -> np.ndarray:
+    rgb = np.asarray(image.convert("RGB"))
+    mask = _foreground(rgb)
+    ys, xs = np.nonzero(mask)
+    crop = (mask[ys.min():ys.max() + 1, xs.min():xs.max() + 1] * 255).astype(np.uint8)
+    h, w = crop.shape
+    scale = min((size - 8) / max(w, 1), (size - 8) / max(h, 1))
+    nearest = getattr(getattr(Image, "Resampling", Image), "NEAREST")
+    resized = Image.fromarray(crop).resize(
+        (max(1, round(w * scale)), max(1, round(h * scale))), nearest
+    )
+    arr = np.asarray(resized, dtype=np.float32) / 255.0
+    canvas = np.zeros((size, size), dtype=np.float32)
+    y0, x0 = (size - arr.shape[0]) // 2, (size - arr.shape[1]) // 2
+    canvas[y0:y0 + arr.shape[0], x0:x0 + arr.shape[1]] = arr
+    return canvas
+
+
+def recognize_color(image: Image.Image) -> str:
+    rgb = np.asarray(image.convert("RGB"))
+    observed = np.median(rgb[_foreground(rgb)], axis=0)
+    return min(COLOR_PALETTE, key=lambda name: float(
+        np.linalg.norm(observed - np.asarray(COLOR_PALETTE[name]))))
+
+
+class NumberRecognizer:
+    def __init__(self, reference_dir: str | os.PathLike[str] = RESOURCES_DIR):
+        paths = sorted(Path(reference_dir).glob("number_*.png"))
+        if not paths:
+            raise FileNotFoundError(f"找不到数字模板: {reference_dir}")
+        self._templates = [(expected_digit_for_filename(path), normalized_glyph(Image.open(path)))
+                           for path in paths]
+
+    def recognize(self, path: str | os.PathLike[str]) -> dict:
+        image = Image.open(path)
+        glyph = normalized_glyph(image)
+        digit, _ = min(self._templates,
+                       key=lambda item: float(np.mean(np.square(glyph - item[1]))))
+        return {"digit": digit, "color": recognize_color(image)}
 
 
 class VisionController:
-    """数字和颜色识别。"""
+    def __init__(self, node: Node, sim: bool = True, image_path: str | None = None):
+        self._node, self._sim, self._image_path = node, sim, image_path
+        self._recognizer = NumberRecognizer()
 
-    def __init__(self, node: Node, sim: bool = True):
-        self._node = node
-        self._sim = sim
-        self._images_dir = RESOURCES_DIR
-
-    def recognize_number(self) -> dict:
-        """识别数字图片，返回 {"digit": int, "color": str}。"""
-        if self._sim and os.path.isdir(self._images_dir):
-            return self._recognize_local()
-        elif self._sim:
-            # 无本地图片时模拟
-            return self._recognize_mock()
-        else:
-            # TODO: 真机摄像头 + CV
-            self._node.get_logger().info("[Vision] 真机识别待实现")
-            return self._recognize_mock()
-
-    def _recognize_local(self) -> dict:
-        """从本地图片中选一张做 OCR 识别。"""
-        images = [
-            f for f in os.listdir(self._images_dir)
-            if f.endswith((".png", ".jpg", ".jpeg"))
-        ]
-        if not images:
-            return self._recognize_mock()
-
-        img_path = os.path.join(self._images_dir, random.choice(images))
-        self._node.get_logger().info(f"[Vision] 识别图片: {img_path}")
-
-        try:
-            import pytesseract
-            from PIL import Image
-            text = pytesseract.image_to_string(
-                Image.open(img_path), config="--psm 10 -c tessedit_char_whitelist=0123456789"
-            ).strip()
-            if text.isdigit() and 0 <= int(text) <= 9:
-                return {"digit": int(text), "color": self._guess_color(img_path)}
-        except ImportError:
-            pass
-        return self._recognize_mock()
-
-    def _recognize_mock(self) -> dict:
-        """模拟识别结果。"""
-        colors = ["红色", "蓝色", "绿色", "黄色", "白色", "黑色", "紫色", "橙色"]
-        result = {
-            "digit": random.randint(0, 9),
-            "color": random.choice(colors),
-        }
-        self._node.get_logger().info(f"[Vision] 模拟识别: {result}")
+    def recognize_number(self, image_path: str | None = None) -> dict:
+        selected = image_path or self._image_path or os.environ.get("RAICOM_NUMBER_IMAGE")
+        if not selected:
+            raise RuntimeError("未提供数字图片；请设置 --number-image 或 RAICOM_NUMBER_IMAGE")
+        path = Path(selected)
+        if not path.is_absolute():
+            path = RESOURCES_DIR / path
+        result = self._recognizer.recognize(path)
+        self._node.get_logger().info(f"[Vision] {path.name}: {result}")
         return result
-
-    def _guess_color(self, img_path: str) -> str:
-        """简单颜色猜测（基于文件名或像素采样）。"""
-        import numpy as np
-        from PIL import Image
-        try:
-            img = Image.open(img_path).convert("RGB")
-            arr = np.array(img.resize((50, 50)))
-            avg = arr.mean(axis=(0, 1))
-            r, g, b = avg
-            if r > 200 and g < 100 and b < 100: return "红色"
-            if r < 100 and g > 200 and b < 100: return "绿色"
-            if r < 100 and g < 100 and b > 200: return "蓝色"
-            if r > 200 and g > 200 and b < 100: return "黄色"
-            if r > 200 and g > 200 and b > 200: return "白色"
-            if r < 50 and g < 50 and b < 50: return "黑色"
-            if r > 150 and g < 100 and b > 100: return "紫色"
-            if r > 200 and g > 100 and b < 50: return "橙色"
-        except Exception:
-            pass
-        return "红色"

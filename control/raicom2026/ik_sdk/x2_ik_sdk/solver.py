@@ -47,11 +47,17 @@ class X2ArmIKSolver:
         *,
         current_head_pos: Iterable[float] | None = None,
         q_seed: np.ndarray | None = None,
+        tool_offset_xyz: Iterable[float] | None = None,
     ) -> IKResult:
         side = ArmSide(side)
         target = np.asarray(list(target_xyz), dtype=float)
         if target.shape != (3,):
             raise ValueError(f"target_xyz must have length 3, got {target}")
+        tool_offset = np.zeros(3) if tool_offset_xyz is None else np.asarray(
+            list(tool_offset_xyz), dtype=float)
+        if tool_offset.shape != (3,):
+            raise ValueError(
+                f"tool_offset_xyz must have length 3, got {tool_offset}")
 
         q = self._seed_q(current_arm_pos, current_head_pos, q_seed)
         frame_name = self.config.frame_for_side(side)
@@ -65,7 +71,9 @@ class X2ArmIKSolver:
             pin.forwardKinematics(self.model, self.data, q)
             pin.updateFramePlacements(self.model, self.data)
 
-            current = self.data.oMf[frame_id].translation
+            placement = self.data.oMf[frame_id]
+            world_offset = placement.rotation @ tool_offset
+            current = placement.translation + world_offset
             err = target - current
             err_norm = float(np.linalg.norm(err))
             if err_norm < self.config.eps:
@@ -79,7 +87,12 @@ class X2ArmIKSolver:
                 frame_id,
                 pin.ReferenceFrame.LOCAL_WORLD_ALIGNED,
             )
-            jacobian = jacobian6[:3, :]
+            # Translational Jacobian of a point rigidly attached to the end
+            # frame: v_point = v_origin + omega x r.  This lets callers solve
+            # for the physical finger centre rather than applying a world-axis
+            # approximation to the OmniPicker palm origin.
+            jacobian = (jacobian6[:3, :]
+                        - pin.skew(world_offset) @ jacobian6[3:, :])
             velocity = self._damped_least_squares(jacobian, err, active_v_idxs)
             step = velocity * self.config.dt
             step_norm = float(np.linalg.norm(step))
@@ -91,7 +104,9 @@ class X2ArmIKSolver:
 
         pin.forwardKinematics(self.model, self.data, q)
         pin.updateFramePlacements(self.model, self.data)
-        final = self.data.oMf[frame_id].translation.copy()
+        placement = self.data.oMf[frame_id]
+        final = (placement.translation
+                 + placement.rotation @ tool_offset).copy()
         arm_pos = self.arm_pos_from_q(q)
         active_arm = arm_pos[:7] if side == ArmSide.LEFT else arm_pos[7:]
 

@@ -60,12 +60,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-desktop \
     ros-humble-grid-map-msgs \
     ros-humble-grid-map-ros \
+    ros-humble-navigation2 \
+    ros-humble-nav2-bringup \
+    ros-humble-pointcloud-to-laserscan \
     ros-humble-rmw-cyclonedds-cpp \
+    ros-humble-slam-toolbox \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m pip install --no-cache-dir \
     -i https://mirrors.aliyun.com/pypi/simple/ \
-    anthropic
+    anthropic \
+    mujoco==3.3.7 \
+    pin==2.7.0 \
+    PyYAML
 
 RUN groupadd --gid "${USER_GID}" "${USERNAME}" 2>/dev/null || true && \
     useradd --create-home --uid "${USER_UID}" --gid "${USER_GID}" \
