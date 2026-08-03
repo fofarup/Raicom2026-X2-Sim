@@ -124,8 +124,7 @@ class Navigator:
         # The CPG's safe translating yaw authority cannot remove a large
         # cross-track error in the final half metre before the north wall.
         # Reach the centre line first, while there is ample turning clearance,
-        # then make a slower straight entry into interaction zone I. Both legs
-        # are still planned from the live blank-map lidar grid.
+        # then make a slower straight entry into interaction zone I.
         if (self._mc.position is not None
                 and abs(target_x - INTERACT_I[0]) < 1e-6
                 and abs(target_y - INTERACT_I[1]) < 1e-6
@@ -134,8 +133,14 @@ class Navigator:
                     *INTERACT_APPROACH, speed=min(speed, 0.35),
                     timeout=min(timeout * 0.65, 150.0), tolerance=0.22):
                 return False
-            speed = min(speed, 0.28)
-            timeout = max(60.0, timeout * 0.35)
+            # Final northward approach: laser grid around the interaction zone
+            # forces narrow A* corridors that the CPG cannot track smoothly.
+            # A straight-line move from the centre approach point is clearer
+            # for the gait and still keeps the robot inside the zone.
+            self._node.get_logger().info("直走廊接近交互区-I")
+            return self._mc.move_toward(
+                *INTERACT_I, speed=min(speed, 0.22),
+                tolerance=max(tolerance, 0.35), timeout=max(60.0, timeout * 0.35))
         # 等待空白地图的首帧激光；A* 使用已观测栅格并对未知区域加代价。
         deadline = time.monotonic() + min(2.0, timeout)
         while not self._mapper.ready and time.monotonic() < deadline:
@@ -178,12 +183,11 @@ class Navigator:
             self._node.get_logger().error("没有定位，无法调整朝向")
             return False
         px, py, _ = self._mc.position
-        # The bundled CPG has a repeatable low-speed yaw dead band of roughly
-        # 7 degrees. Ten degrees is still a clear face-to-face orientation and
-        # avoids waiting forever for accuracy the gait cannot physically hold.
+        # 仿真 CPG 步态在小角度旋转时有 ~7° 死区。15° 仍然是人眼可辨的
+        # "正面朝向"，且大概率在一次交替踏步周期内收敛。
         return self._mc.rotate_to(
             math.atan2(target_y - py, target_x - px),
-            tolerance=math.radians(10), timeout=timeout)
+            tolerance=math.radians(15), timeout=timeout)
 
     def face_yaw(self, yaw: float, timeout: float = 100.0) -> bool:
         return self._mc.rotate_to(yaw, timeout=timeout)
