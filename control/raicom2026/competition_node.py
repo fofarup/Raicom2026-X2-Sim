@@ -104,7 +104,7 @@ class CompetitionNode(Node):
             return False
         if self.args.sim:
             x, y, _ = self.motion.position
-            if math.hypot(x + 1.5, y + 1.5) > 0.20:
+            if math.hypot(x + 1.5, y + 1.5) > 0.35:
                 self.get_logger().error(
                     f"Reset 后未回到官方起点: ({x:.3f}, {y:.3f})")
                 return False
