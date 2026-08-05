@@ -20,13 +20,13 @@ READY = [-0.35, 0.45, 0.0, -1.00, 0.0, 0.15, 0.0,
 
 # ── 五种比赛动作（IK 求解，全部在限位内）─────────────────────
 POSES = {
-    # 挥左手：hand → (0.25, 0.45, 0.55) 前上方
+    # 挥左手：人工调参，wrist_pitch 来回摇摆
     "挥左手":
-        [-0.75, 1.00, 0.25, -1.26, 0.00, 0.11, 0.04] + READY[7:],
+        [-1.32, 0.87, 0.28, -1.40, -0.64, 0.00, -0.12] + READY[7:],
 
-    # 挥右手：hand → (0.25, -0.45, 0.55) 前上方
+    # 挥右手：左手镜像
     "挥右手":
-        READY[:7] + [-0.77, -1.00, -0.24, -1.26, 0.00, 0.11, -0.04],
+        READY[:7] + [-1.32, -0.87, -0.28, -1.40, 0.64, 0.00, 0.12],
 
     # 左手敬礼：人工调参保存，大臂外展+手到额头
     "左手敬礼":
@@ -57,12 +57,12 @@ class GestureController:
         target = POSES[name]
         if not self._grasp.move_arm(target, duration=1.5):
             return False
-        # 挥手：前臂左右摆动（wrist_yaw 振荡）
+        # 挥手：手腕俯仰来回摆（wrist_pitch 振荡）
         if name.startswith("挥"):
             side_start = 0 if "左" in name else 7
-            for angle in (0.0, -0.80, 0.80, -0.80, 0.80, 0.0):
+            for angle in (0.0, -0.50, 0.50, -0.50, 0.50, 0.0):
                 pose = list(target)
-                pose[side_start + 4] = angle  # wrist_yaw: 前臂左右
+                pose[side_start + 5] = angle  # wrist_pitch
                 if not self._grasp.move_arm(pose, duration=0.25):
                     return False
         else:
