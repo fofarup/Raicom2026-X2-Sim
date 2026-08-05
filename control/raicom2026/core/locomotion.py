@@ -187,9 +187,9 @@ class MotionController:
         self.stop(1.0)
         return False
 
-    def rotate_to(self, target_yaw: float, tolerance: float = math.radians(10),
+    def rotate_to(self, target_yaw: float, tolerance: float = math.radians(7),
                   timeout: float = 12.0) -> bool:
-        """原地转向：前后=0，侧向交替踏步保持 CPG，角度增益 1.0 更快收敛。"""
+        """原地转向：前后=0，侧向交替踏步。最低角速度 0.10 突破 CPG 死区。"""
         import rclpy
         anchor = None if self.position is None else self.position[:2]
         count = 0
@@ -216,9 +216,11 @@ class MotionController:
             if abs(error) <= tolerance:
                 self.stop(0.8)
                 return True
-            # 增益 1.0，上限 0.50 rad/s（约 29°/s），快速到位
-            angular = max(-0.50, min(0.50, 1.0 * error))
-            # 侧向 0.3s 交替踏步，保持 CPG 活跃
+            # 最低 0.10 rad/s 突破固件死区 (~0.03 rad/s)，上限 0.50
+            sign = 1.0 if error > 0 else -1.0
+            magnitude = max(0.10, abs(1.0 * error))
+            angular = sign * min(0.50, magnitude)
+            # 侧向踏步 0.3s 交替
             phase = int((time.monotonic() - started) / 0.30)
             lateral = 0.06 if phase % 2 == 0 else -0.06
             if anchor is None:
@@ -226,7 +228,7 @@ class MotionController:
             drift = math.hypot(anchor[0] - px, anchor[1] - py)
             if count % 25 == 0:
                 self._node.get_logger().info(
-                    f"  rotate_err={math.degrees(error):.0f}deg "
+                    f"  rotate_err={math.degrees(error):.1f}deg "
                     f"drift={drift:.2f}m angular={angular:+.2f}")
             self.publish(0.0, angular, lateral)
             time.sleep(0.02)
