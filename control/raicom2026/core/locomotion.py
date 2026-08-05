@@ -187,9 +187,9 @@ class MotionController:
         self.stop(1.0)
         return False
 
-    def rotate_to(self, target_yaw: float, tolerance: float = math.radians(5),
+    def rotate_to(self, target_yaw: float, tolerance: float = math.radians(10),
                   timeout: float = 12.0) -> bool:
-        """原地转向：用侧向踏步激活 CPG，不放前后平移避免碰墙。"""
+        """原地转向：前后=0，侧向交替踏步保持 CPG，角度增益 1.0 更快收敛。"""
         import rclpy
         anchor = None if self.position is None else self.position[:2]
         count = 0
@@ -203,12 +203,12 @@ class MotionController:
                 time.sleep(0.02)
                 continue
             if self.position is not None and self.position[2] < 0.45:
-                self._node.get_logger().error("转向时检测到跌倒，立即停止")
+                self._node.get_logger().error("转向跌倒急停")
                 self.stop(0.5)
                 return False
             px, py, _ = self.position
             if abs(px) > 1.78 or abs(py) > 1.78:
-                self._node.get_logger().error(f"转向接近场地边界，急停")
+                self._node.get_logger().error("转向边界急停")
                 self.stop(0.5)
                 return False
             error = math.atan2(math.sin(target_yaw - self.yaw),
@@ -216,9 +216,10 @@ class MotionController:
             if abs(error) <= tolerance:
                 self.stop(0.8)
                 return True
-            angular = max(-0.35, min(0.35, 0.50 * error))
-            # 原地转：前后=0，侧向交替踏步保持 CPG 活跃，不漂移
-            phase = int((time.monotonic() - started) / 0.50)
+            # 增益 1.0，上限 0.50 rad/s（约 29°/s），快速到位
+            angular = max(-0.50, min(0.50, 1.0 * error))
+            # 侧向 0.3s 交替踏步，保持 CPG 活跃
+            phase = int((time.monotonic() - started) / 0.30)
             lateral = 0.06 if phase % 2 == 0 else -0.06
             if anchor is None:
                 anchor = (px, py)
@@ -226,7 +227,7 @@ class MotionController:
             if count % 25 == 0:
                 self._node.get_logger().info(
                     f"  rotate_err={math.degrees(error):.0f}deg "
-                    f"drift={drift:.2f}m")
+                    f"drift={drift:.2f}m angular={angular:+.2f}")
             self.publish(0.0, angular, lateral)
             time.sleep(0.02)
         self.stop(1.0)
