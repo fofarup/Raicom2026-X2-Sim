@@ -187,9 +187,8 @@ class GraspController:
         return True
 
     def _publish_upper_body(self, arm_values: Iterable[float]) -> None:
-        """真机发 /mc/upper_body_command，仿真加发 /aima/hal/joint/arm/command。"""
+        """发 /mc/upper_body_command → MC 转发到手臂/sim。"""
         arm_list = [float(v) for v in arm_values]
-        # 真机话题
         msg = UpperBodyCommandArray()
         msg.header = MessageHeader()
         msg.header.stamp = self._node.get_clock().now().to_msg()
@@ -202,20 +201,6 @@ class GraspController:
         msg.arm_pos = arm_list
         msg.hand_pos = [1.0, 1.0]
         self._arm_pub.publish(msg)
-        # 仿真话题：MuJoCo 直接响应 JointCommandArray
-        if self._sim:
-            sim_msg = JointCommandArray()
-            sim_msg.header = MessageHeader()
-            sim_msg.header.stamp = self._node.get_clock().now().to_msg()
-            for i, name in enumerate(ALL_ARM_JOINTS):
-                cmd = JointCommand()
-                cmd.name = name
-                cmd.position = arm_list[i]
-                cmd.velocity = 0.25
-                cmd.stiffness = 40.0
-                cmd.damping = 2.0
-                sim_msg.joints.append(cmd)
-            self._sim_claw_pub.publish(sim_msg)
 
     def grip(self, hand: str, position: float, duration: float = 1.5):
         if hand not in ("left", "right"):

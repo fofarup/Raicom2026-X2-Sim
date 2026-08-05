@@ -88,9 +88,7 @@ def main():
         print(f"  {status} {name} ({elapsed:.1f}s)")
 
         if name != todo[-1]:
-            print("  ", end="")
-            if not args.all:
-                input("按回车继续下一个...")
+            time.sleep(1.0)  # 动作间短暂停顿
 
     # 回 READY
     print("\n>>> 恢复预备姿态...")
