@@ -123,11 +123,10 @@ class CompetitionNode(Node):
     def task1(self) -> bool:
         self.transition(CompetitionState.NAVIGATE_INTERACTION_I)
         self.speech.say("正在自主导航至交互区I。")
-        if not self.navigator.goto(*INTERACT_I, speed=0.50, timeout=240.0):
+        # 三段式：中转点→转向→倒退泊入
+        if not self.navigator.task1_enter_zone():
             return False
         self.transition(CompetitionState.FACE_INTERACTION_II)
-        if not self.navigator.face(*INTERACT_II):
-            return False
         self.speech.say("已进入交互区I并面向交互区II。")
         return True
 

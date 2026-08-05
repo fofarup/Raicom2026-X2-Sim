@@ -111,40 +111,25 @@ class MotionController:
             rclpy.spin_once(self._node, timeout_sec=0.0)
             time.sleep(0.02)
 
-    # ── 梯形速度参数 ──
-    STARTUP_THRESHOLD = 0.10    # 起步最低速度 (m/s)，固件门限 ~0.09
-    ACCEL_DIST = 0.40           # 加速段距离 (m)
-    DECEL_DIST = 0.50           # 减速段距离 (m)
-    MIN_SPEED = 0.08            # 极低速（维持行走）
-
-    def _speed_ramp(self, dist: float, total_dist: float, cruise: float) -> float:
-        """梯形速度曲线：起步加速 → 巡航 → 接近减速。
-        total_dist 是本次导航全程估算距离。"""
-        if dist > self.DECEL_DIST:
-            # 巡航或加速段
-            accel_dist_from_start = total_dist - dist
-            if accel_dist_from_start < self.ACCEL_DIST:
-                # 加速段：从启动门限斜升到巡航速度
-                t = accel_dist_from_start / self.ACCEL_DIST
-                return self.STARTUP_THRESHOLD + (cruise - self.STARTUP_THRESHOLD) * t
-            return cruise
-        else:
-            # 减速段：从巡航斜降到最低速
-            t = dist / self.DECEL_DIST
-            return max(self.STARTUP_THRESHOLD, cruise * t + self.MIN_SPEED * (1 - t))
+    # ── 参考 raicom_project 导航参数 ──
+    YAW_TOLERANCE = math.radians(4.0)    # 朝向容差
+    POS_TOLERANCE = 0.12                 # 位置容差
+    DOCK_TOLERANCE = 0.08                # 泊车位置容差
+    DOCK_OVERSHOOT = 0.20                # 泊车过冲量 (m)
+    HEADING_GATE = math.radians(25.0)    # 超过此角度先原地转
+    POSE_MAX_AGE = 0.6                   # 定位数据最大有效期
 
     def move_toward(
         self, target_x: float, target_y: float,
-        speed: float = 0.35, tolerance: float = 0.15,
+        speed: float = 0.30, tolerance: float = 0.12,
         timeout: float = 30.0, obstacle_check: bool = True,
     ) -> bool:
-        """梯形速度 + P 航向修正导航。起步柔、巡航快、近距减速到位。"""
-        self._node.get_logger().info(f"移动至 ({target_x:.2f}, {target_y:.2f}) cruise={speed:.2f}")
+        """参考 raicom_project: drive_to。
+        朝向偏差 >25° 先原地转，否则边走边修。"""
+        self._node.get_logger().info(f"移动至 ({target_x:.2f}, {target_y:.2f})")
         deadline = time.monotonic() + timeout
         import rclpy
         cnt = 0
-        # 记录本次导航的估算全程距离
-        total_dist = None
         while time.monotonic() < deadline:
             rclpy.spin_once(self._node, timeout_sec=0.0)
             cnt += 1
@@ -154,36 +139,85 @@ class MotionController:
                 continue
             px, py, pz = self.position
             if abs(px) > 1.78 or abs(py) > 1.78:
-                self._node.get_logger().error(f"边界 ({px:.2f},{py:.2f}) 急停")
-                self.stop(0.5)
-                return False
+                self._node.get_logger().error("边界急停")
+                self.stop(0.5); return False
             if pz < 0.45:
                 self._node.get_logger().error("跌倒急停")
-                self.stop(0.5)
-                return False
-            dist = math.hypot(target_x - px, target_y - py)
-            if total_dist is None:
-                total_dist = dist  # 第一次读到位置时记录总距
+                self.stop(0.5); return False
+            dx, dy = target_x - px, target_y - py
+            dist = math.hypot(dx, dy)
             if dist < tolerance:
                 self._node.get_logger().info("已到达")
-                self.stop(1.0)
-                return True
-            # 梯形速度
-            fwd = self._speed_ramp(dist, total_dist, speed)
-            # 航向修正
-            target_yaw = math.atan2(target_y - py, target_x - px)
+                self.stop(1.0); return True
+            target_yaw = math.atan2(dy, dx)
             current_yaw = self.yaw if self.yaw is not None else target_yaw
-            yaw_err = math.atan2(math.sin(target_yaw - current_yaw),
-                                 math.cos(target_yaw - current_yaw))
-            angular = max(-0.50, min(0.50, 2.0 * yaw_err))
-            if cnt % 10 == 0:
+            heading_err = math.atan2(math.sin(target_yaw - current_yaw),
+                                     math.cos(target_yaw - current_yaw))
+            # 朝向偏差大 → 只转不走
+            if abs(heading_err) > self.HEADING_GATE:
+                fwd = 0.0
+            else:
+                fwd = max(0.06, min(speed, 0.55 * dist))
+                fwd *= max(0.25, math.cos(heading_err))
+            angular = max(-0.40, min(0.40, 1.4 * heading_err))
+            if cnt % 15 == 0:
                 self._node.get_logger().info(
                     f"  pos=({px:.2f},{py:.2f}) dist={dist:.2f} "
-                    f"yaw_err={math.degrees(yaw_err):.0f}deg "
+                    f"head_err={math.degrees(heading_err):.0f}deg "
                     f"fwd={fwd:.2f} ang={angular:+.2f}")
             self.publish(fwd, angular)
             time.sleep(0.02)
         self._node.get_logger().warn("移动超时！")
+        self.stop(1.0)
+        return False
+
+    def dock_at(self, target_x: float, target_y: float,
+                target_yaw: float, timeout: float = 30.0) -> bool:
+        """参考 raicom_project: dock_at。低速倒退泊入目标点，同时保持朝向。
+        控制点放在目标后方 0.20m，让机器人自然倒退进目标。"""
+        self._node.get_logger().info(f"泊入 ({target_x:.2f}, {target_y:.2f}) yaw={math.degrees(target_yaw):.0f}deg")
+        deadline = time.monotonic() + timeout
+        import rclpy
+        cnt = 0
+        stable_since = None
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self._node, timeout_sec=0.0)
+            cnt += 1
+            if self.position is None or not self.pose_is_fresh():
+                self.publish(0.0)
+                time.sleep(0.01); continue
+            px, py, pz = self.position
+            if pz < 0.45:
+                self.stop(0.5); return False
+            # 控制点 = 目标点后方 0.20m（机器人倒退进去）
+            ctrl_x = target_x - math.cos(target_yaw) * self.DOCK_OVERSHOOT
+            ctrl_y = target_y - math.sin(target_yaw) * self.DOCK_OVERSHOOT
+            dx, dy = ctrl_x - px, ctrl_y - py
+            dist = math.hypot(dx, dy)
+            yaw_err = math.atan2(math.sin(target_yaw - self.yaw),
+                                 math.cos(target_yaw - self.yaw))
+            # 检查停稳
+            ok_dist = dist < self.DOCK_TOLERANCE
+            ok_yaw = abs(yaw_err) <= self.YAW_TOLERANCE
+            if ok_dist and ok_yaw:
+                if stable_since is None:
+                    stable_since = time.monotonic()
+                elif time.monotonic() - stable_since >= 0.5:
+                    self._node.get_logger().info("泊入完成")
+                    self.stop(1.0)
+                    return True
+            else:
+                stable_since = None
+            # 走倒退方向
+            body_forward = (math.cos(self.yaw) * dx + math.sin(self.yaw) * dy) / max(dist, 0.01)
+            fwd = max(-0.20, min(0.20, 0.75 * body_forward))
+            angular = max(-0.25, min(0.25, 1.0 * yaw_err))
+            if cnt % 15 == 0:
+                self._node.get_logger().info(
+                    f"  dist={dist:.2f} yaw_err={math.degrees(yaw_err):.0f}deg fwd={fwd:.2f}")
+            self.publish(fwd, angular)
+            time.sleep(0.02)
+        self._node.get_logger().warn("泊入超时！")
         self.stop(1.0)
         return False
 

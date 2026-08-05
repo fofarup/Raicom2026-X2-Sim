@@ -20,15 +20,16 @@ from .locomotion import MotionController
 from .mapping import LidarMapper
 
 
-# ── 比赛场地坐标 ──────────────────────────────────────────────
+# ── 比赛场地坐标（参考 raicom_project）─────────────────────
 START = (-1.5, -1.5)
 START_YAW = math.pi / 2
-# 圆形交互区中心为 y=1.70；中心点距后墙内沿仅约 0.15 m。取区内
-# y=1.55 的安全点，既保持机器人整体进入标识区，又给身体留出墙距。
-INTERACT_I = (0.0, 1.65)   # 深入区域内，确保双脚都在线内
-INTERACT_II = (0.0, 1.00)
-INTERACT_APPROACH = (0.0, 0.55)
-# 停在桌前而不是桌子中心；机器人面向 +x 方向取物。
+INTERACT_I = (0.0, 1.70)   # 交互区-I 圆心（官方圆形区域中心 y=1.70）
+INTERACT_II = (0.0, 1.00)  # 交互区-II（面向此方向得分，yaw=atan2(-0.7,0)=-90°）
+# 中转点：先走到这里再转向，最后倒退泊入 INTERACT_I。
+# x=-0.35 预补偿双足原地转的 x 漂移（约 +0.35m）。
+STAGING = (-0.35, 1.0)
+FINAL_YAW = math.atan2(INTERACT_II[1] - INTERACT_I[1],
+                       INTERACT_II[0] - INTERACT_I[0])  # ≈ -90° (面朝南)
 WORK_ZONE = (0.65, -0.85)
 
 
@@ -177,6 +178,20 @@ class Navigator:
             if not self.goto(x, y, speed=speed):
                 return False
         return True
+
+    def task1_enter_zone(self) -> bool:
+        """三段式进入交互区-I（参考 raicom_project）：
+        1. 走到中转点 STAGING
+        2. 在中转点原地转到 FINAL_YAW（面朝交互区-II）
+        3. 倒退泊入 INTERACT_I 圆心"""
+        self._node.get_logger().info("--- 阶段1: 走到中转点 ---")
+        if not self._mc.move_toward(*STAGING, speed=0.30, timeout=120.0):
+            return False
+        self._node.get_logger().info("--- 阶段2: 原地转向 ---")
+        if not self._mc.rotate_to(FINAL_YAW, timeout=20.0):
+            return False
+        self._node.get_logger().info("--- 阶段3: 倒退泊入 ---")
+        return self._mc.dock_at(*INTERACT_I, FINAL_YAW, timeout=40.0)
 
     def face(self, target_x: float, target_y: float, timeout: float = 100.0) -> bool:
         if self._mc.position is None:
