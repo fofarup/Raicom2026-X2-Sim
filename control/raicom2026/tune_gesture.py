@@ -131,8 +131,9 @@ class ArmTuner:
         self.val_labels[idx].config(text=f"{v:.3f} rad ({v*57.3:.0f}deg)")
 
     def _publish(self):
+        """直接发一次目标位置，不跑轨迹。"""
         with self._lock:
-            self.grasp.move_arm(self.get_angles(), duration=0.15)
+            self.grasp._publish_upper_body(self.get_angles())
 
     def _save(self):
         name = self.name_entry.get().strip() or "gesture"
@@ -150,7 +151,7 @@ class ArmTuner:
         for i, (s, v) in enumerate(zip(self.sliders, flat)):
             s.set(v)
             self._update_label(i)
-        self.grasp.move_arm(flat, duration=0.5)
+        self.grasp._publish_upper_body(flat)
         self._status.config(text="READY")
 
     def _zero(self):
