@@ -189,17 +189,10 @@ class MotionController:
 
     def rotate_to(self, target_yaw: float, tolerance: float = math.radians(5),
                   timeout: float = 12.0) -> bool:
-        """小幅交替踏步转到绝对航向，并确认停止。
-
-        官方 RL 步态对纯角速度有死区，必须同时给出很小的平移速度。
-        转向会产生少量平移；到达航向后直接交还给随后地图坐标导航
-        消除该误差。这里若另起一次“回转向起点”，会在旧速度尚未完全
-        衰减时反向追逐一个近点，实测容易过冲并破坏步态稳定性。
-        """
+        """原地转向：用侧向踏步激活 CPG，不放前后平移避免碰墙。"""
         import rclpy
         anchor = None if self.position is None else self.position[:2]
         count = 0
-        initial_forward_sign = None
         started = time.monotonic()
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -215,8 +208,7 @@ class MotionController:
                 return False
             px, py, _ = self.position
             if abs(px) > 1.78 or abs(py) > 1.78:
-                self._node.get_logger().error(
-                    f"转向接近场地边界 ({px:.2f}, {py:.2f})，急停")
+                self._node.get_logger().error(f"转向接近场地边界，急停")
                 self.stop(0.5)
                 return False
             error = math.atan2(math.sin(target_yaw - self.yaw),
@@ -224,30 +216,18 @@ class MotionController:
             if abs(error) <= tolerance:
                 self.stop(0.8)
                 return True
-            angular = max(-0.30, min(0.30, 0.30 * error))
+            angular = max(-0.35, min(0.35, 0.50 * error))
+            # 原地转：前后=0，侧向交替踏步保持 CPG 活跃，不漂移
+            phase = int((time.monotonic() - started) / 0.50)
+            lateral = 0.06 if phase % 2 == 0 else -0.06
             if anchor is None:
                 anchor = (px, py)
             drift = math.hypot(anchor[0] - px, anchor[1] - py)
-            # Pure angular velocity falls inside the bundled CPG's dead band,
-            # but holding one forward sign for a 90-degree turn drifts roughly
-            # half a metre. Reset-isolated calibration showed that alternating
-            # +0.10/-0.10 every 0.40 s preserves yaw authority while reducing
-            # 90-degree translational drift to 6.2 cm.
-            heading_dot_centre = (math.cos(self.yaw) * -px
-                                  + math.sin(self.yaw) * -py)
-            nominal_sign = 1.0 if heading_dot_centre >= 0.0 else -1.0
-            if initial_forward_sign is None:
-                initial_forward_sign = nominal_sign
-            phase = int((time.monotonic() - started) / 0.40)
-            alternating_sign = 1.0 if phase % 2 == 0 else -1.0
-            forward = 0.10 * initial_forward_sign * alternating_sign
-            lateral, turn_command = 0.0, angular
             if count % 25 == 0:
                 self._node.get_logger().info(
-                    f"  rotate_err={math.degrees(error):.0f}° "
-                    f"drift={drift:.2f} radius={math.hypot(px, py):.2f} "
-                    f"forward={forward:+.2f}")
-            self.publish(forward, turn_command, lateral)
+                    f"  rotate_err={math.degrees(error):.0f}deg "
+                    f"drift={drift:.2f}m")
+            self.publish(0.0, angular, lateral)
             time.sleep(0.02)
         self.stop(1.0)
         self._node.get_logger().warn("转向超时")
