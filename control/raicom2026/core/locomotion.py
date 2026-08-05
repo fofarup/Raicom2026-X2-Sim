@@ -115,7 +115,7 @@ class MotionController:
     YAW_TOLERANCE = math.radians(4.0)    # 朝向容差
     POS_TOLERANCE = 0.12                 # 位置容差
     DOCK_TOLERANCE = 0.08                # 泊车位置容差
-    DOCK_OVERSHOOT = 0.20                # 泊车过冲量 (m)
+    DOCK_OVERSHOOT = 0.08                # 泊车过冲量 (m)，退多了就减小
     HEADING_GATE = math.radians(25.0)    # 超过此角度先原地转
     POSE_MAX_AGE = 0.6                   # 定位数据最大有效期
 
@@ -210,7 +210,7 @@ class MotionController:
                 stable_since = None
             # 走倒退方向
             body_forward = (math.cos(self.yaw) * dx + math.sin(self.yaw) * dy) / max(dist, 0.01)
-            fwd = max(-0.20, min(0.20, 0.75 * body_forward))
+            fwd = max(-0.15, min(0.15, 0.60 * body_forward))
             angular = max(-0.25, min(0.25, 1.0 * yaw_err))
             if cnt % 15 == 0:
                 self._node.get_logger().info(
