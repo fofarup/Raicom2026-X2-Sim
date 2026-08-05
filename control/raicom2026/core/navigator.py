@@ -46,16 +46,15 @@ class Navigator:
         self._mc = mc
         self._sim = sim
         self._odom_origin = None
-        self._mapper = LidarMapper(node, lambda: self._mc.pose)
-        self._mc.set_safety_check(self._mapper.safe_to_advance)
+        # 激光建图在真机才有效；仿真用里程计，不依赖不稳定的激光插件
+        if not sim:
+            self._mapper = LidarMapper(node, lambda: self._mc.pose)
+            self._mc.set_safety_check(self._mapper.safe_to_advance)
 
         if sim:
-            # This simulator build publishes a reset-relative odometry stream
-            # which can disagree with the MuJoCo world frame.  Do not let two
-            # pose sources race; the audited lidar plugin carries world pose in
-            # its reserved first two samples.
+            # 仿真用官方里程计（/aima/hal/odom/state），稳定可靠
             node.create_subscription(
-                PointCloud2, LidarMapper.TOPIC, self._on_lidar_pose,
+                Odometry, "/aima/hal/odom/state", self._on_odom,
                 self.ODOM_QOS
             )
         else:
@@ -115,7 +114,8 @@ class Navigator:
         self._mc.update_pose(p.x, p.y, p.z, yaw)
 
     def reset_map(self):
-        self._mapper.reset()
+        if hasattr(self, '_mapper'):
+            self._mapper.reset()
 
     def goto(
         self, target_x: float, target_y: float,
@@ -141,7 +141,12 @@ class Navigator:
             return self._mc.move_toward(
                 *INTERACT_I, speed=min(speed, 0.22),
                 tolerance=max(tolerance, 0.35), timeout=max(60.0, timeout * 0.35))
-        # 等待空白地图的首帧激光；A* 使用已观测栅格并对未知区域加代价。
+        # 仿真模式：直接走直线（里程计定位）
+        if self._sim:
+            return self._mc.move_toward(
+                target_x, target_y, speed=speed, timeout=timeout,
+                tolerance=tolerance)
+        # 真机模式：激光建图 + A* 规划
         deadline = time.monotonic() + min(2.0, timeout)
         while not self._mapper.ready and time.monotonic() < deadline:
             rclpy.spin_once(self._node, timeout_sec=0.05)
