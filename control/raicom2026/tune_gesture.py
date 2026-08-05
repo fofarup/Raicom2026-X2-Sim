@@ -1,160 +1,149 @@
 #!/usr/bin/env python3
-"""交互式手臂关节调试——键盘调角度，按 S 保存。
+"""手臂关节 GUI 调参——滑块拖到满意姿势，点保存。
 
-控制键：
-  1/2/3/4/5/6/7 — 选左臂关节 (sp/sr/sy/el/wy/wp/wr)
-  q/w/e/r/t/y/u — 选右臂关节
-  ↑/↓ — 当前关节 ±0.05 rad (~3°)
-  PgUp/PgDn — 当前关节 ±0.20 rad (~11°)
-  S — 保存当前姿态到文件
-  R — 回到 READY
-  Z — 全部归零
-  Q — 退出
+运行: python3 tune_gesture.py --sim
 """
 
-import os
-import sys
-import time
+import os, sys, time, threading
 sys.path.insert(0, os.path.dirname(__file__))
+
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 import rclpy
 from rclpy.node import Node
 from core.mode_switch import ModeSwitch
 from core.grasp import GraspController, ALL_ARM_JOINTS
 
-JOINT_NAMES = ["sp(肩俯仰)", "sr(肩横滚)", "sy(肩偏航)",
-               "el(肘)", "wy(腕偏航)", "wp(腕俯仰)", "wr(腕横滚)"]
-
-LEFT_KEYS = "1234567"
-RIGHT_KEYS = "qwertyu"
-
-
-def print_state(angles, selected, label=""):
-    """打印当前关节角。"""
-    print(f"\033[2J\033[H")  # 清屏
-    print(f"╔══════════════════════════════════════════╗")
-    print(f"║  交互式手臂调参  {label:<20}║")
-    print(f"╠══════════════════════════════════════════╣")
-    print(f"║ 选中关节: {JOINT_NAMES[selected%7]} "
-          f"({'左臂' if selected < 7 else '右臂'})"
-          f" 当前值: {angles[selected]:.3f} rad ({round(angles[selected]*57.3)}°) ║")
-    print(f"╠══════════════════════════════════════════╣")
-
-    for side, offset, prefix in [("左臂", 0, "L"), ("右臂", 7, "R")]:
-        print(f"║ {side}:", end="")
-        for i in range(7):
-            idx = offset + i
-            marker = ">" if idx == selected else " "
-            v = angles[idx]
-            print(f" {prefix}{JOINT_NAMES[i][:2]}={marker}{v:+.3f}", end="")
-        print(" ║")
-
-    print(f"╠══════════════════════════════════════════╣")
-    print(f"║ L:1-7 R:q-w-e-r-t-y-u  ↑↓:±0.05  Pg:±0.2║")
-    print(f"║ S:保存  R:READY  Z:归零  Q:退出        ║")
-    print(f"╚══════════════════════════════════════════╝")
+JNAMES = ["肩俯仰","肩横滚","肩偏航","肘","腕偏航","腕俯仰","腕横滚"]
+LIMITS_L = [(-3.08,2.04),(-0.061,2.993),(-2.556,2.556),(-2.356,0),(-2.556,2.556),(-0.558,0.558),(-1.571,0.724)]
+LIMITS_R = [(-3.08,2.04),(-2.993,0.061),(-2.556,2.556),(-2.356,0),(-2.556,2.556),(-0.558,0.558),(-0.724,1.571)]
+READY_L = [-0.35, 0.45, 0.0, -1.0, 0.0, 0.15, 0.0]
+READY_R = [-0.35,-0.45, 0.0, -1.0, 0.0, 0.15, 0.0]
 
 
-def apply_angles(grasp, angles, duration=0.3):
-    """发送关节角到手臂。"""
-    grasp.move_arm(angles, duration=duration)
+class ArmTuner:
+    def __init__(self, sim=True):
+        rclpy.init()
+        self.node = Node("arm_tuner")
+        self.mode = ModeSwitch(self.node)
+        self.grasp = GraspController(self.node, sim=sim)
+        self._running = True
+        self._lock = threading.Lock()
 
+        # 切 US
+        self.node.get_logger().info("切换 US 模式...")
+        if not self.mode.set("US"):
+            raise RuntimeError("US 模式失败")
 
-def main():
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--sim", action="store_true", default=True)
-    args = parser.parse_args()
+        # Spin 线程
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
 
-    rclpy.init()
-    node = Node("tune_gesture")
-    mode = ModeSwitch(node)
-    grasp = GraspController(node, sim=args.sim)
+        # GUI
+        self.root = tk.Tk()
+        self.root.title("手臂关节调参 — 拖到满意姿势点保存")
+        self.root.geometry("800x500")
 
-    # READY pose
-    angles = [-0.35, 0.45, 0.0, -1.0, 0.0, 0.15, 0.0,
-              -0.35, -0.45, 0.0, -1.0, 0.0, 0.15, 0.0]
+        main = ttk.Frame(self.root, padding=10)
+        main.pack(fill="both", expand=True)
 
-    # 切 US 模式
-    print("切换到 US 模式...")
-    if not mode.set("US"):
-        print("US 模式失败")
-        node.destroy_node()
+        self.sliders = []
+        self.val_labels = []
+        self.deg_labels = []
+
+        for side, limits, ready, prefix in [
+            ("左臂", LIMITS_L, READY_L, "L"),
+            ("右臂", LIMITS_R, READY_R, "R"),
+        ]:
+            f = ttk.LabelFrame(main, text=side, padding=5)
+            f.pack(side="left", fill="both", expand=True, padx=5)
+
+            for i, (name, (lo, hi), init) in enumerate(zip(JNAMES, limits, ready)):
+                row = ttk.Frame(f)
+                row.pack(fill="x", pady=1)
+
+                ttk.Label(row, text=f"{prefix}{name}", width=10).pack(side="left")
+
+                s = ttk.Scale(row, from_=lo, to=hi, value=init,
+                              orient="horizontal", length=200)
+                s.pack(side="left", fill="x", expand=True, padx=5)
+                s.bind("<B1-Motion>", lambda e, idx=len(self.sliders): self._on_slide(idx))
+                s.bind("<ButtonRelease-1>", lambda e, idx=len(self.sliders): self._on_slide(idx))
+
+                vl = ttk.Label(row, text=f"{init:.3f}", width=7)
+                vl.pack(side="left")
+                dl = ttk.Label(row, text=f"({init*57.3:.0f}°)", width=7)
+                dl.pack(side="left")
+
+                self.sliders.append(s)
+                self.val_labels.append(vl)
+                self.deg_labels.append(dl)
+
+        # 按钮
+        btns = ttk.Frame(self.root, padding=5)
+        btns.pack(fill="x")
+
+        ttk.Button(btns, text="保存姿态", command=self._save).pack(side="left", padx=5)
+        ttk.Button(btns, text="回 READY", command=self._ready).pack(side="left", padx=5)
+        ttk.Button(btns, text="全部归零", command=self._zero).pack(side="left", padx=5)
+        self._status = ttk.Label(btns, text="")
+        self._status.pack(side="right", padx=10)
+
+        self.root.protocol("WM_DELETE_WINDOW", self._quit)
+
+    def _spin(self):
+        while self._running and rclpy.ok():
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+
+    def get_angles(self):
+        return [s.get() for s in self.sliders]
+
+    def _on_slide(self, idx):
+        angles = self.get_angles()
+        self.val_labels[idx].config(text=f"{angles[idx]:.3f}")
+        self.deg_labels[idx].config(text=f"({angles[idx]*57.3:.0f}°)")
+        with self._lock:
+            self.grasp.move_arm(angles, duration=0.2)
+
+    def _save(self):
+        angles = self.get_angles()
+        ts = time.strftime("%H%M%S")
+        fname = f"/tmp/gesture_saved_{ts}.txt"
+        with open(fname, "w") as f:
+            f.write(f"[{', '.join(f'{v:.4f}' for v in angles)}]\n")
+        self._status.config(text=f"已保存: {fname}")
+        self.node.get_logger().info(f"已保存: {fname}")
+
+    def _ready(self):
+        for i, (s, v) in enumerate(zip(self.sliders, READY_L + READY_R)):
+            s.set(v)
+            self.val_labels[i].config(text=f"{v:.3f}")
+            self.deg_labels[i].config(text=f"({v*57.3:.0f}°)")
+        self.grasp.move_arm(READY_L + READY_R, duration=0.5)
+        self._status.config(text="回到 READY")
+
+    def _zero(self):
+        for i, s in enumerate(self.sliders):
+            s.set(0.0)
+            self.val_labels[i].config(text="0.000")
+            self.deg_labels[i].config(text="(0°)")
+        self.grasp.move_arm([0.0]*14, duration=0.5)
+        self._status.config(text="全部归零")
+
+    def _quit(self):
+        self._running = False
+        self.root.destroy()
+        self.node.destroy_node()
         rclpy.shutdown()
-        return
 
-    selected = 0  # 当前选中的关节索引
-    label = ""
-
-    try:
-        import tty
-        import termios
-        fd = sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
-        tty.setraw(fd)
-
-        print_state(angles, selected)
-        while True:
-            ch = sys.stdin.read(1)
-
-            if ch == "\x1b":  # ESC序列
-                ch2 = sys.stdin.read(2)
-                if ch2 == "[A":  # ↑
-                    angles[selected] += 0.05
-                elif ch2 == "[B":  # ↓
-                    angles[selected] -= 0.05
-                elif ch2 == "[5":  # PgUp
-                    sys.stdin.read(1)
-                    angles[selected] += 0.20
-                elif ch2 == "[6":  # PgDn
-                    sys.stdin.read(1)
-                    angles[selected] -= 0.20
-            elif ch in LEFT_KEYS:
-                selected = LEFT_KEYS.index(ch)
-            elif ch in RIGHT_KEYS:
-                selected = 7 + RIGHT_KEYS.index(ch)
-            elif ch in "sS":
-                # 保存
-                name = input("\n动作名(如 敬礼): ").strip() or "saved"
-                ts = time.strftime("%H%M%S")
-                fname = f"/tmp/gesture_{name}_{ts}.txt"
-                with open(fname, "w") as f:
-                    f.write(f"# {name}\n")
-                    f.write(f"# saved at {time.ctime()}\n")
-                    f.write(f"[{', '.join(f'{v:.3f}' for v in angles)}]\n")
-                label = f"已保存: {fname}"
-            elif ch in "rR":
-                angles = [-0.35, 0.45, 0.0, -1.0, 0.0, 0.15, 0.0,
-                          -0.35, -0.45, 0.0, -1.0, 0.0, 0.15, 0.0]
-                label = "回到 READY"
-            elif ch in "zZ":
-                angles = [0.0] * 14
-                label = "全部归零"
-            elif ch in "qQ" or ord(ch) == 3:  # q/Q/Ctrl-C
-                break
-
-            # Clamp to limits
-            limits = [
-                -3.08, -0.061, -2.556, -2.356, -2.556, -0.558, -1.571,
-                -3.08, -2.993, -2.556, -2.356, -2.556, -0.558, -0.724,
-            ]
-            uppers = [
-                2.04, 2.993, 2.556, 0.0, 2.556, 0.558, 0.724,
-                2.04, 0.061, 2.556, 0.0, 2.556, 0.558, 1.571,
-            ]
-            angles[selected] = max(limits[selected],
-                                   min(uppers[selected], angles[selected]))
-
-            apply_angles(grasp, angles)
-            print_state(angles, selected, label)
-
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        apply_angles(grasp, angles, duration=0.5)
-        node.destroy_node()
-        rclpy.shutdown()
-        print("\n退出。保存的文件在 /tmp/")
+    def run(self):
+        self.root.mainloop()
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--sim", action="store_true", default=True)
+    args = p.parse_args()
+    ArmTuner(sim=args.sim).run()
