@@ -123,7 +123,7 @@ class CompetitionNode(Node):
     def task1(self) -> bool:
         self.transition(CompetitionState.NAVIGATE_INTERACTION_I)
         self.speech.say("正在自主导航至交互区I。")
-        if not self.navigator.goto(*INTERACT_I, speed=0.40, timeout=240.0):
+        if not self.navigator.goto(*INTERACT_I, speed=0.50, timeout=240.0):
             return False
         self.transition(CompetitionState.FACE_INTERACTION_II)
         if not self.navigator.face(*INTERACT_II):
@@ -177,7 +177,7 @@ class CompetitionNode(Node):
         self.speech.say(need.response)
         self.transition(CompetitionState.NAVIGATE_WORK_ZONE)
         if not self.navigator.goto(
-                *WORK_ZONE, speed=0.35, timeout=240.0, tolerance=0.40):
+                *WORK_ZONE, speed=0.50, timeout=240.0, tolerance=0.40):
             return False
         # 从安全工作区低速进入抓取停靠位；左/右手各自保留 25 cm 横向偏置。
         if not self.navigator.dock_for_grasp(need.object_world_xyz, self.args.hand):

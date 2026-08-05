@@ -113,7 +113,7 @@ class MotionController:
 
     def move_toward(
         self, target_x: float, target_y: float,
-        speed: float = 0.15, tolerance: float = 0.15,
+        speed: float = 0.35, tolerance: float = 0.15,
         timeout: float = 30.0, obstacle_check: bool = True,
     ) -> bool:
         self._node.get_logger().info(f"移动至 ({target_x:.2f}, {target_y:.2f})")

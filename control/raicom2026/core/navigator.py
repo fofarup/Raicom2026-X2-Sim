@@ -74,13 +74,8 @@ class Navigator:
         yaw = math.atan2(siny, cosy)
         if p.z == 0.0 and q.x == q.y == q.z == q.w == 0.0:
             return
-        # Valid odometry builds are anchored to the official start pose.
-        if self._odom_origin is None:
-            self._odom_origin = (p.x, p.y, yaw)
-        ox, oy, oyaw = self._odom_origin
-        map_yaw = START_YAW + math.atan2(math.sin(yaw - oyaw), math.cos(yaw - oyaw))
-        self._mc.update_pose(START[0] + p.x - ox, START[1] + p.y - oy,
-                             p.z, map_yaw)
+        # 里程计直接给出世界坐标，不需要锚点偏移
+        self._mc.update_pose(p.x, p.y, p.z, yaw)
 
     def _on_lidar_pose(self, msg: PointCloud2):
         """Decode sensor world pose reserved in cloud samples zero and one."""
