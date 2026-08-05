@@ -86,9 +86,7 @@ def main():
         elapsed = time.monotonic() - start
         status = "✅" if ok else "❌"
         print(f"  {status} {name} ({elapsed:.1f}s)")
-
-        if name != todo[-1]:
-            time.sleep(1.0)  # 动作间短暂停顿
+        time.sleep(1.0)
 
     # 回 READY
     print("\n>>> 恢复预备姿态...")
