@@ -111,16 +111,40 @@ class MotionController:
             rclpy.spin_once(self._node, timeout_sec=0.0)
             time.sleep(0.02)
 
+    # ── 梯形速度参数 ──
+    STARTUP_THRESHOLD = 0.10    # 起步最低速度 (m/s)，固件门限 ~0.09
+    ACCEL_DIST = 0.40           # 加速段距离 (m)
+    DECEL_DIST = 0.50           # 减速段距离 (m)
+    MIN_SPEED = 0.08            # 极低速（维持行走）
+
+    def _speed_ramp(self, dist: float, total_dist: float, cruise: float) -> float:
+        """梯形速度曲线：起步加速 → 巡航 → 接近减速。
+        total_dist 是本次导航全程估算距离。"""
+        if dist > self.DECEL_DIST:
+            # 巡航或加速段
+            accel_dist_from_start = total_dist - dist
+            if accel_dist_from_start < self.ACCEL_DIST:
+                # 加速段：从启动门限斜升到巡航速度
+                t = accel_dist_from_start / self.ACCEL_DIST
+                return self.STARTUP_THRESHOLD + (cruise - self.STARTUP_THRESHOLD) * t
+            return cruise
+        else:
+            # 减速段：从巡航斜降到最低速
+            t = dist / self.DECEL_DIST
+            return max(self.STARTUP_THRESHOLD, cruise * t + self.MIN_SPEED * (1 - t))
+
     def move_toward(
         self, target_x: float, target_y: float,
         speed: float = 0.35, tolerance: float = 0.15,
         timeout: float = 30.0, obstacle_check: bool = True,
     ) -> bool:
-        """简化的 P 控制器导航：直接朝目标走，远近都修正航向。"""
-        self._node.get_logger().info(f"移动至 ({target_x:.2f}, {target_y:.2f}) speed={speed:.2f}")
+        """梯形速度 + P 航向修正导航。起步柔、巡航快、近距减速到位。"""
+        self._node.get_logger().info(f"移动至 ({target_x:.2f}, {target_y:.2f}) cruise={speed:.2f}")
         deadline = time.monotonic() + timeout
         import rclpy
         cnt = 0
+        # 记录本次导航的估算全程距离
+        total_dist = None
         while time.monotonic() < deadline:
             rclpy.spin_once(self._node, timeout_sec=0.0)
             cnt += 1
@@ -138,21 +162,25 @@ class MotionController:
                 self.stop(0.5)
                 return False
             dist = math.hypot(target_x - px, target_y - py)
+            if total_dist is None:
+                total_dist = dist  # 第一次读到位置时记录总距
             if dist < tolerance:
                 self._node.get_logger().info("已到达")
                 self.stop(1.0)
                 return True
+            # 梯形速度
+            fwd = self._speed_ramp(dist, total_dist, speed)
+            # 航向修正
             target_yaw = math.atan2(target_y - py, target_x - px)
             current_yaw = self.yaw if self.yaw is not None else target_yaw
             yaw_err = math.atan2(math.sin(target_yaw - current_yaw),
                                  math.cos(target_yaw - current_yaw))
             angular = max(-0.50, min(0.50, 2.0 * yaw_err))
-            fwd = speed * max(0.15, math.cos(yaw_err)) * min(1.0, dist / 0.3)
             if cnt % 10 == 0:
                 self._node.get_logger().info(
                     f"  pos=({px:.2f},{py:.2f}) dist={dist:.2f} "
                     f"yaw_err={math.degrees(yaw_err):.0f}deg "
-                    f"cmd=({fwd:.2f},{angular:+.2f})")
+                    f"fwd={fwd:.2f} ang={angular:+.2f}")
             self.publish(fwd, angular)
             time.sleep(0.02)
         self._node.get_logger().warn("移动超时！")
