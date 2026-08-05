@@ -58,13 +58,13 @@ class GestureController:
         target = POSES[name]
         if not self._grasp.move_arm(target, duration=1.5):
             return False
-        # 挥手额外摆动腕关节
+        # 挥手：前臂左右摆动（wrist_yaw 振荡）
         if name.startswith("挥"):
             side_start = 0 if "左" in name else 7
-            for angle in (0.45, -0.45, 0.45, 0.0):
+            for angle in (0.0, -0.80, 0.80, -0.80, 0.80, 0.0):
                 pose = list(target)
-                pose[side_start + 6] = angle  # wrist_roll
-                if not self._grasp.move_arm(pose, duration=0.28):
+                pose[side_start + 4] = angle  # wrist_yaw: 前臂左右
+                if not self._grasp.move_arm(pose, duration=0.25):
                     return False
         else:
             time.sleep(1.5)
