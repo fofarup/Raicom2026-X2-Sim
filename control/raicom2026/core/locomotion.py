@@ -116,14 +116,11 @@ class MotionController:
         speed: float = 0.35, tolerance: float = 0.15,
         timeout: float = 30.0, obstacle_check: bool = True,
     ) -> bool:
-        self._node.get_logger().info(f"移动至 ({target_x:.2f}, {target_y:.2f})")
+        """简化的 P 控制器导航：直接朝目标走，远近都修正航向。"""
+        self._node.get_logger().info(f"移动至 ({target_x:.2f}, {target_y:.2f}) speed={speed:.2f}")
         deadline = time.monotonic() + timeout
         import rclpy
         cnt = 0
-        prealigned = False
-        start_escaped = False
-        course_heading = None
-        course_anchor = None
         while time.monotonic() < deadline:
             rclpy.spin_once(self._node, timeout_sec=0.0)
             cnt += 1
@@ -131,154 +128,35 @@ class MotionController:
                 self.publish(0.0)
                 time.sleep(0.01)
                 continue
-            if (obstacle_check and self._safety_check is not None and
-                    not self._safety_check()):
-                self._node.get_logger().warn("激光检测到前方障碍，停止并请求重新规划")
-                self.stop(0.5)
-                return False
-            px, py, _ = self.position
+            px, py, pz = self.position
             if abs(px) > 1.78 or abs(py) > 1.78:
-                self._node.get_logger().error(
-                    f"接近场地边界 ({px:.2f}, {py:.2f})，急停")
+                self._node.get_logger().error(f"边界 ({px:.2f},{py:.2f}) 急停")
                 self.stop(0.5)
                 return False
-            if self.position[2] < 0.45:
-                self._node.get_logger().error("检测到骨盆高度过低，判定跌倒并急停")
+            if pz < 0.45:
+                self._node.get_logger().error("跌倒急停")
                 self.stop(0.5)
                 return False
-            if (not start_escaped and px < -1.30 and py < -1.20):
-                if not self._escape_start_corner(deadline):
-                    return False
-                start_escaped = True
-                prealigned = True
-                course_anchor = None
-                course_heading = None
-                continue
             dist = math.hypot(target_x - px, target_y - py)
             if dist < tolerance:
                 self._node.get_logger().info("已到达")
                 self.stop(1.0)
                 return True
             target_yaw = math.atan2(target_y - py, target_x - px)
-            if course_anchor is None:
-                course_anchor = (px, py)
-                body_yaw = self.yaw if self.yaw is not None else target_yaw
-                course_heading = body_yaw + self.COURSE_YAW_OFFSET
-            course_dx, course_dy = px - course_anchor[0], py - course_anchor[1]
-            if math.hypot(course_dx, course_dy) >= 0.08:
-                measured = math.atan2(course_dy, course_dx)
-                # Circular low-pass filtering rejects individual 5 Hz lidar
-                # pose jumps without hiding sustained cross-track drift.
-                delta = math.atan2(math.sin(measured - course_heading),
-                                   math.cos(measured - course_heading))
-                course_heading += 0.65 * delta
-                course_anchor = (px, py)
-            yaw_err = target_yaw - course_heading
-            yaw_err = math.atan2(math.sin(yaw_err), math.cos(yaw_err))
-            # Re-align whenever meaningful translation remains.  A fixed
-            # 0.50 m gate let precision moves orbit their target with 90--170
-            # degree heading error instead of turning to face it.
-            if dist > max(0.75, tolerance + 0.20) and abs(yaw_err) > math.radians(45):
-                # Leave a wall-side start pose along the already stable body
-                # heading before asking the gait for a large yaw change.
-                yaw_now = self.yaw or 0.0
-                inward = (math.cos(yaw_now) * -px + math.sin(yaw_now) * -py)
-                if (not prealigned and max(abs(px), abs(py)) > 1.20 and
-                        inward > 0.0):
-                    if px < -1.30 and py < -1.20:
-                        # Official start is in the south-west corner. A
-                        # short 60-degree heading followed by a north-east leg
-                        # creates clearance from both walls before the large
-                        # clockwise turn.
-                        if not self.rotate_to(
-                                math.radians(60),
-                                tolerance=math.radians(12), timeout=15.0):
-                            return False
-                        rclpy.spin_once(self._node, timeout_sec=0.05)
-                        px, py, _ = self.position
-                        stage_x, stage_y = px + 0.35, py + 0.55
-                    else:
-                        stage_x = px + 0.65 * math.cos(yaw_now)
-                        stage_y = py + 0.65 * math.sin(yaw_now)
-                    remaining = deadline - time.monotonic()
-                    if not self.move_toward(
-                            stage_x, stage_y, speed=0.35, tolerance=0.30,
-                            timeout=min(30.0, remaining - 1.0),
-                            obstacle_check=obstacle_check):
-                        return False
-                remaining = deadline - time.monotonic()
-                if remaining <= 5.0 or not self.rotate_to(
-                        target_yaw - self.COURSE_YAW_OFFSET,
-                        tolerance=math.radians(25),
-                        timeout=min(40.0, remaining - 1.0)):
-                    return False
-                prealigned = True
-                rclpy.spin_once(self._node, timeout_sec=0.05)
-                px, py, _ = self.position
-                course_anchor = (px, py)
-                body_yaw = self.yaw if self.yaw is not None else target_yaw
-                course_heading = body_yaw + self.COURSE_YAW_OFFSET
-                continue
-            prealigned = True
-            # At normal forward speed this CPG largely suppresses yaw (a
-            # reset-isolated +0.15 command changed only 3.9 degrees in 5 s).
-            # For a large measured course error use the separately calibrated
-            # stable turning gait: 0.10 m/s forward with <=0.30 rad/s yaw.
-            turning_course = abs(yaw_err) > math.radians(30)
-            if turning_course:
-                angular = max(-0.30, min(0.30, yaw_err * 0.35))
-            else:
-                angular = max(-0.052, min(0.052, yaw_err * 0.12))
-            yaw = self.yaw or 0.0
-            # The bundled CPG is not holonomic despite exposing three velocity
-            # fields. A reset-isolated calibration measured pure forward motion
-            # at 0.885 m / 5 s with under 1 mm cross-track error, while lateral
-            # coupling caused target-side orbits. Turn first, then walk forward.
-            gait = (0.10 if turning_course else
-                    max(0.20, speed * min(1.0, dist / 0.60)))
-            fwd = gait
-            lateral = 0.0
-            if cnt % 15 == 0:
+            current_yaw = self.yaw if self.yaw is not None else target_yaw
+            yaw_err = math.atan2(math.sin(target_yaw - current_yaw),
+                                 math.cos(target_yaw - current_yaw))
+            angular = max(-0.50, min(0.50, 2.0 * yaw_err))
+            fwd = speed * max(0.15, math.cos(yaw_err)) * min(1.0, dist / 0.3)
+            if cnt % 10 == 0:
                 self._node.get_logger().info(
-                    f"  pose=({px:.2f},{py:.2f},{math.degrees(yaw):.0f}°) "
-                    f"course={math.degrees(course_heading):.0f}° "
-                    f"dist={dist:.2f} course_err={math.degrees(yaw_err):.0f}° "
-                    f"cmd=({fwd:+.2f},{lateral:+.2f},{angular:+.3f})")
-            self.publish(fwd, angular, lateral)
+                    f"  pos=({px:.2f},{py:.2f}) dist={dist:.2f} "
+                    f"yaw_err={math.degrees(yaw_err):.0f}deg "
+                    f"cmd=({fwd:.2f},{angular:+.2f})")
+            self.publish(fwd, angular)
             time.sleep(0.02)
         self._node.get_logger().warn("移动超时！")
         self.stop(1.0)
-        return False
-
-    def _escape_start_corner(self, outer_deadline: float) -> bool:
-        """Leave the south-west start using the reset-calibrated straight gait.
-
-        Turning in the corner translates unpredictably and can touch the west
-        wall. Reset-isolated calibration of forward=0.30/lateral=-0.50 moved
-        0.98 m north and 0.42 m east in five seconds while remaining upright.
-        """
-        import rclpy
-        deadline = min(outer_deadline - 2.0, time.monotonic() + 12.0)
-        self._node.get_logger().info("官方起点直行脱离墙角")
-        while time.monotonic() < deadline:
-            rclpy.spin_once(self._node, timeout_sec=0.0)
-            if self.position is None or not self.pose_is_fresh():
-                self.publish(0.0)
-                time.sleep(0.02)
-                continue
-            px, py, pz = self.position
-            if pz < 0.45 or px < -1.74 or py < -1.74:
-                self._node.get_logger().error(
-                    f"起点脱离触发安全停止 ({px:.2f}, {py:.2f}, z={pz:.2f})")
-                self.stop(0.5)
-                return False
-            if py >= -0.88:
-                self.stop(0.8)
-                return True
-            self.publish(0.30, 0.0, -0.50)
-            time.sleep(0.02)
-        self.stop(0.5)
-        self._node.get_logger().error("起点直行脱离超时")
         return False
 
     def rotate_to(self, target_yaw: float, tolerance: float = math.radians(5),
