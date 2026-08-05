@@ -223,66 +223,51 @@ docker exec raicom2026-x2-sim bash -lc \
 
 ---
 
-## 四、从终端启动（完整流程）
+## 四、从终端启动
 
-### 4.1 首次使用：启动仿真环境
+### 4.1 一键启动（推荐）
 
 ```bash
-# ──── 宿主机终端 ────
-
-# 1. 进入项目目录
 cd ~/x2_ws/x2_biao
-
-# 2. 确保 X11 权限
-xhost +local:docker
-
-# 3. 启动容器（首次运行会自动创建）
-bash scripts/start_container.sh
-# 输出：容器已启动：raicom2026-x2-sim
-
-# 4. 进入容器
-docker exec -it raicom2026-x2-sim bash -l
+bash scripts/tmux/start_split.sh
 ```
 
-```bash
-# ──── 容器内终端 ────
+自动完成：启动容器 → MuJoCo 仿真 → MC 运动控制 → 控制终端。
 
-# 5. 启动 MuJoCo 仿真
-/workspace/scripts/in_container/start_sim.sh
-# 等待约 10 秒，看到关节数据滚动说明启动成功
-# MuJoCo 图形窗口会自动弹出
+窗口布局：
+
+```
+┌──────────────────────────┬──────────────┐
+│   MuJoCo 仿真             │  MC 控制台   │
+│   （图形窗口弹出）          │              │
+│                          ├──────────────┤
+│                          │  控制终端    │
+│                          │  (输入命令)  │
+└──────────────────────────┴──────────────┘
 ```
 
-```bash
-# ──── 再开一个宿主机终端 ────
-
-# 6. 第二个终端，进入容器启动 MC
-docker exec -it raicom2026-x2-sim bash -l
-
-# ──── 容器内 ────
-/workspace/scripts/in_container/start_mc.sh
-# 输出：Get LEG Joint size: 12 等说明启动成功
-```
+`Ctrl+B` 然后 `0/1/2` 切换窗格。在右下控制终端直接跑比赛：
 
 ```bash
-# ──── 再开第三个宿主机终端 ────
-
-# 7. 第三个终端，进入容器跑比赛任务
-docker exec -it raicom2026-x2-sim bash -l
-
-# ──── 容器内 ────
 cd /workspace/control/raicom2026
 python3 competition_node.py --sim
 ```
 
-### 4.2 或使用 tmux 三分屏（一键启动）
+### 4.2 手动启动（调试用）
 
 ```bash
-# 宿主机终端
-cd ~/x2_ws/x2_biao
-bash scripts/tmux/start_split.sh
-# 自动在三个窗格中启动 Sim / MC / 控制台
-# Ctrl+B 然后数字键 0/1/2 切换窗格
+# 终端1：仿真
+docker exec -it raicom2026-x2-sim bash -l
+/workspace/scripts/in_container/start_sim.sh
+
+# 终端2：MC
+docker exec -it raicom2026-x2-sim bash -l
+/workspace/scripts/in_container/start_mc.sh
+
+# 终端3：比赛
+docker exec -it raicom2026-x2-sim bash -l
+cd /workspace/control/raicom2026
+python3 competition_node.py --sim
 ```
 
 ### 4.3 比赛任务交互流程
