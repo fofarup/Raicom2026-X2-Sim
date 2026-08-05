@@ -30,7 +30,7 @@ INTERACT_II = (0.0, 1.00)  # 交互区-II（面向此方向得分，yaw=atan2(-0
 STAGING = (-0.35, 1.0)
 FINAL_YAW = math.atan2(INTERACT_II[1] - INTERACT_I[1],
                        INTERACT_II[0] - INTERACT_I[0])  # ≈ -90° (面朝南)
-WORK_ZONE = (0.65, -0.85)
+WORK_ZONE = (1.0, -1.5)   # 作业区接近点（对齐 raicom_project）
 
 
 class Navigator:
@@ -208,39 +208,57 @@ class Navigator:
         return self._mc.rotate_to(yaw, timeout=timeout)
 
     def dock_for_grasp(self, object_xyz, hand: str) -> bool:
-        """Make a short, precision-controlled approach to the table front."""
+        """参考 raicom_project align_to_table：转到面朝桌子，前进对准。"""
         object_x, object_y, _ = object_xyz
-        lateral = 0.30 if hand == "left" else -0.30
-        # The table front is aligned with the map y-axis and must be approached
-        # facing +x. Computing this from the *current* yaw makes the target move
-        # after the gait turns and produces an orbit in front of the table.
-        # IK sweep with the physical 13 cm tool point gives a hard low-height
-        # reach limit near 0.32 m. A 0.22 m pelvis-to-object standoff remains
-        # clear of the measured table front while keeping the contact target
-        # comfortably inside that workspace, including up to 10 degrees yaw.
-        dock_x = object_x - 0.22
-        dock_y = object_y - lateral
-        self._node.get_logger().info(
-            f"精确停靠 {hand}: ({dock_x:.2f}, {dock_y:.2f})")
-        # Keep the final manoeuvre out of the general 2-D point controller:
-        # below roughly 50 cm, its course estimate becomes ill-conditioned and
-        # can orbit the target. Align once, use the weak lateral channel only
-        # for the table-lane Y correction, then make a monotonic +X approach.
-        if not self._mc.rotate_to(
-                0.0, tolerance=math.radians(16), timeout=30.0):
+        # 面朝桌子 (+x, yaw≈0)
+        self._node.get_logger().info("转到面朝桌子")
+        if not self._mc.rotate_to(0.0, timeout=20.0):
             return False
-        # The table is intentionally closer than normal navigation clearance.
-        # Stop from signed world-X progress; live post-US pose is still used by
-        # arm IK for the remaining centimetres.
-        if not self._mc.move_axis(
-                "x", dock_x, speed=0.20, tolerance=0.025, timeout=25.0):
-            return False
-        # Forward gait can couple several centimetres into Y, so cross-track
-        # correction must be the last translation, not the first.
-        if not self._mc.strafe_world_y(
-                dock_y, tolerance=0.06, timeout=45.0):
-            return False
-        if not self._mc.rotate_to(
-                0.0, tolerance=math.radians(16), timeout=20.0):
-            return False
-        return True
+        # 身体坐标系前后/左右对准
+        self._node.get_logger().info("身体系对准桌子")
+        deadline = time.monotonic() + 45.0
+        import rclpy
+        cnt = 0
+        stable_since = None
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self._node, timeout_sec=0.0)
+            cnt += 1
+            pos = self._mc.position
+            if pos is None or not self._mc.pose_is_fresh():
+                self._mc.publish(0.0)
+                time.sleep(0.01); continue
+            px, py, _ = pos
+            yaw = self._mc.yaw if self._mc.yaw is not None else 0.0
+            # 世界坐标差 → 身体坐标系
+            world_dx = object_x - px - 0.25   # 骨盆离物体 25cm
+            world_dy = object_y - py
+            body_fwd  =  math.cos(yaw) * world_dx + math.sin(yaw) * world_dy
+            body_lat  = -math.sin(yaw) * world_dx + math.cos(yaw) * world_dy
+            yaw_err   = -yaw   # 目标 yaw=0
+            yaw_err   = math.atan2(math.sin(yaw_err), math.cos(yaw_err))
+            # 判定到达
+            ok = (abs(body_fwd) < 0.08 and abs(body_lat) < 0.08
+                  and abs(yaw_err) < math.radians(8))
+            if ok:
+                if stable_since is None:
+                    stable_since = time.monotonic()
+                elif time.monotonic() - stable_since >= 0.5:
+                    self._mc.stop(1.0)
+                    self._node.get_logger().info("桌子对准完成")
+                    return True
+            else:
+                stable_since = None
+            # 速度命令
+            fwd  = max(-0.15, min(0.15, 0.60 * body_fwd))
+            lat  = max(-0.08, min(0.08, 0.30 * body_lat))
+            ang  = max(-0.25, min(0.25, 1.0 * yaw_err))
+            if cnt % 15 == 0:
+                self._node.get_logger().info(
+                    f"  body_fwd={body_fwd:.2f} body_lat={body_lat:.2f} "
+                    f"yaw_err={math.degrees(yaw_err):.0f}deg"
+                    f"  cmd=({fwd:.2f},{lat:.2f},{ang:+.2f})")
+            self._mc.publish(fwd, ang, lat)
+            time.sleep(0.02)
+        self._node.get_logger().warn("桌子对准超时")
+        self._mc.stop(1.0)
+        return False
