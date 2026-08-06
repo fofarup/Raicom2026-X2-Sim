@@ -216,7 +216,7 @@ class Navigator:
             return False
         # 身体坐标系前后/左右对准
         self._node.get_logger().info("身体系对准桌子")
-        deadline = time.monotonic() + 45.0
+        deadline = time.monotonic() + 90.0
         import rclpy
         cnt = 0
         stable_since = None
@@ -236,9 +236,9 @@ class Navigator:
             body_lat  = -math.sin(yaw) * world_dx + math.cos(yaw) * world_dy
             yaw_err   = -yaw   # 目标 yaw=0
             yaw_err   = math.atan2(math.sin(yaw_err), math.cos(yaw_err))
-            # 判定到达
-            ok = (abs(body_fwd) < 0.08 and abs(body_lat) < 0.08
-                  and abs(yaw_err) < math.radians(8))
+            # 判定到达（放宽到 15cm + 15°, CPG 步态精度有限）
+            ok = (abs(body_fwd) < 0.15 and abs(body_lat) < 0.15
+                  and abs(yaw_err) < math.radians(15))
             if ok:
                 if stable_since is None:
                     stable_since = time.monotonic()
