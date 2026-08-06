@@ -336,7 +336,46 @@ python3 competition_node.py \
 | `--need` | 文本 | — | 预设需求文本 |
 | `--hand` | left / right | right | 抓取使用的手 |
 
-### 4.6 国赛真机使用
+### 4.6 离线语音识别（SenseVoice）
+
+模型下载（一次性，~900MB）：
+
+```bash
+cd ~/x2_ws/x2_biao/control/raicom2026
+bash download_model.sh
+```
+
+**Docker 容器模式**（容器里跑比赛，宿主机跑 ASR 桥接）：
+
+```bash
+# 终端1：宿主机启动 ASR 桥接
+cd ~/x2_ws/x2_biao/control/raicom2026
+python3 asr_bridge.py
+
+# 终端2：容器里跑仿真+MC（照旧）
+cd ~/x2_ws/x2_biao && bash scripts/tmux/start_split.sh
+
+# 终端3：容器里跑比赛
+docker exec -it raicom2026-x2-sim bash -l
+export ASR_BRIDGE_DIR=/workspace/control/raicom2026/.asr_bridge
+cd /workspace/control/raicom2026
+python3 competition_node.py
+```
+
+**宿主机直接模式**（sim+MC 在容器，比赛在宿主机）：
+
+```bash
+# 终端1：容器里启动仿真+MC
+cd ~/x2_ws/x2_biao && bash scripts/tmux/start_split.sh
+
+# 终端2：宿主机跑比赛（ROS_DOMAIN_ID=26 跨容器通信）
+cd ~/x2_ws/x2_biao/control/raicom2026
+python3 competition_node.py
+```
+
+看到 `🎤 录音 X 秒...` 或 `🎤 请说话...` 时直接说话，无需按键。
+
+### 4.7 国赛真机使用
 
 ```bash
 # 真机模式（不带 --sim，启用 ASR/TTS/CV）
@@ -344,7 +383,7 @@ python3 competition_node.py --hand left
 # 按裁判口令操作即可
 ```
 
-### 4.7 停止
+### 4.8 停止
 
 ```bash
 # Ctrl+C 停止当前任务
