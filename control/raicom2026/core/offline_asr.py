@@ -81,44 +81,33 @@ class OfflineASR:
         return stream.result.text.strip()
 
     def _record_vad(self, prompt: str = "") -> str | None:
-        """先录长段音频，再用 VAD 切割出说话段。
-
-        避免了 pyaudio 依赖，直接用 arecord + 离线 VAD 分割。
-        """
+        """先录长段音频，再用 VAD 切割出说话段。"""
         if self._vad is None:
             return None
 
         if prompt:
             print(f"\n🤖 {prompt}")
-        print("🎤 请说话（自动检测结束）...")
 
-        # 录最长 8 秒（VAD 比固定更快，不需要太长）
-        max_dur = 8
-        wav_full = tempfile.mktemp(suffix=".wav")
-        try:
-            import subprocess
-            subprocess.run(
-                ["arecord", "-D", "pulse", "-f", "S16_LE",
-                 "-r", "16000", "-c", "1", "-d", str(max_dur), wav_full],
-                capture_output=True, timeout=max_dur + 10)
-        except subprocess.TimeoutExpired:
-            pass
-        except Exception:
-            pass
+        # 录音（parec → raw PCM）
+        max_dur = 6
+        raw_full = tempfile.mktemp(suffix=".raw")
+        print(f"🎤 录音 {max_dur}s（说话自动检测）...")
+        os.system(
+            f"timeout {max_dur} parec --format=s16le --rate=16000 --channels=1"
+            f" > {raw_full} 2>/dev/null"
+        )
 
-        if os.path.getsize(wav_full) < 1000:
-            os.unlink(wav_full)
+        if os.path.getsize(raw_full) < 2000:
+            os.unlink(raw_full); return None
+
+        # 读 raw PCM
+        audio = np.fromfile(raw_full, dtype=np.int16).astype(np.float32) / 32768.0
+        os.unlink(raw_full)
+        sr = 16000
+        if len(audio) < 1600:
             return None
 
-        # 用 VAD 切成语音段
-        with wave.open(wav_full, "rb") as wf:
-            nframes = wf.getnframes()
-            audio = np.frombuffer(wf.readframes(nframes),
-                                  dtype=np.int16).astype(np.float32) / 32768.0
-            sr = wf.getframerate()
-        os.unlink(wav_full)
-
-        # 初始化新 VAD session
+        # 用 VAD 找语音段
         import sherpa_onnx as so
         vad_path = _find_vad_model()
         svc = so.SileroVadModelConfig(model=vad_path, threshold=0.4,
@@ -127,19 +116,16 @@ class OfflineASR:
         vad = so.VoiceActivityDetector(vc, buffer_size_in_seconds=30)
 
         segments = []
-        in_speech = False
-        seg_start = 0
+        in_speech, seg_start = False, 0
         chunk = 512
         for i in range(0, len(audio) - chunk, chunk):
             vad.accept_waveform(audio[i:i+chunk])
             if vad.is_speech_detected():
                 if not in_speech:
-                    seg_start = i
-                    in_speech = True
-            else:
-                if in_speech:
-                    segments.append((seg_start, i))
-                    in_speech = False
+                    seg_start, in_speech = i, True
+            elif in_speech:
+                segments.append((seg_start, i))
+                in_speech = False
         vad.flush()
         if in_speech:
             segments.append((seg_start, len(audio)))
@@ -147,36 +133,37 @@ class OfflineASR:
         if not segments:
             return None
 
-        # 取最长语音段
         best = max(segments, key=lambda s: s[1] - s[0])
-        start_samp, end_samp = best
-        dur = (end_samp - start_samp) / sr
+        s, e = best
+        dur = (e - s) / sr
         print(f"  🔊 {dur:.1f}s 语音段")
 
         wav_out = tempfile.mktemp(suffix=".wav")
-        seg = audio[start_samp:end_samp]
+        seg = audio[s:e]
         with wave.open(wav_out, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sr)
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(sr)
             wf.writeframes((seg * 32768).astype(np.int16).tobytes())
         return wav_out
 
     def _record_fixed(self, duration: float = 5.0) -> str | None:
-        """固定时长录音（VAD 不可用时回退）。"""
-        import subprocess
+        """固定时长录音（parec 输出 raw PCM → 转 WAV）。"""
+        raw = tempfile.mktemp(suffix=".raw")
+        d = int(duration)
+        print(f"🎤 录音 {d} 秒...")
+        os.system(
+            f"timeout {d} parec --format=s16le --rate=16000 --channels=1"
+            f" > {raw} 2>/dev/null"
+        )
+        if os.path.getsize(raw) < 2000:
+            os.unlink(raw); return None
+        # 转 WAV
         wav = tempfile.mktemp(suffix=".wav")
-        print(f"🎤 录音 {duration} 秒...")
-        try:
-            subprocess.run(
-                ["arecord", "-D", "pulse", "-f", "S16_LE",
-                 "-r", "16000", "-c", "1", "-d", str(int(duration)), wav],
-                capture_output=True, timeout=int(duration) + 8)
-            if os.path.getsize(wav) > 1000:
-                return wav
-        except Exception as e:
-            print(f"[ASR] 录音失败: {e}")
-        return None
+        data = np.fromfile(raw, dtype=np.int16)
+        os.unlink(raw)
+        with wave.open(wav, "wb") as wf:
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(16000)
+            wf.writeframes(data.tobytes())
+        return wav
 
     def listen(self, prompt: str = "", duration: float = 5.0) -> str:
         """语音输入。VAD > 固定时长 > 键盘。"""
