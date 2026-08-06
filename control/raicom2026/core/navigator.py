@@ -180,25 +180,18 @@ class Navigator:
         return True
 
     def task1_enter_zone(self) -> bool:
-        """四级进入交互区-I：
-        1. 走到中转点 STAGING（粗）
-        2. 粗接近 INTERACT_I 前方 0.3m（中）
-        3. 原地转到 FINAL_YAW（面朝交互区-II）
-        4. dock_at 精确泊入"""
+        """三段式进入交互区-I（参考 raicom_project）：
+        1. 走到中转点 STAGING
+        2. 在中转点原地转到 FINAL_YAW（面朝交互区-II）
+        3. 倒退泊入 INTERACT_I 圆心"""
         self._node.get_logger().info("--- 阶段1: 走到中转点 ---")
-        if not self._mc.move_toward(*STAGING, speed=0.40, tolerance=0.20, timeout=120.0):
+        if not self._mc.move_toward(*STAGING, speed=0.30, timeout=120.0):
             return False
-        # 粗接近：dock_at 是倒退泊入，所以接近点在目标后方（南侧）
-        approach = (INTERACT_I[0] + 0.30 * math.cos(FINAL_YAW),
-                    INTERACT_I[1] + 0.30 * math.sin(FINAL_YAW))
-        self._node.get_logger().info(f"--- 阶段2: 粗接近 {approach} ---")
-        if not self._mc.move_toward(*approach, speed=0.25, tolerance=0.15, timeout=60.0):
-            return False
-        self._node.get_logger().info("--- 阶段3: 原地转向 ---")
+        self._node.get_logger().info("--- 阶段2: 原地转向 ---")
         if not self._mc.rotate_to(FINAL_YAW, timeout=20.0):
             return False
-        self._node.get_logger().info("--- 阶段4: 倒退泊入 ---")
-        return self._mc.dock_at(*INTERACT_I, FINAL_YAW, timeout=60.0)
+        self._node.get_logger().info("--- 阶段3: 倒退泊入 ---")
+        return self._mc.dock_at(*INTERACT_I, FINAL_YAW, timeout=40.0)
 
     def face(self, target_x: float, target_y: float, timeout: float = 100.0) -> bool:
         if self._mc.position is None:
