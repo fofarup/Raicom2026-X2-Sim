@@ -180,14 +180,18 @@ class Navigator:
         return True
 
     def task1_enter_zone(self) -> bool:
-        """两段进入交互区-I：
-        1. 直接走到 INTERACT_I（航向修正走直线）
-        2. 原地转向面朝 INTERACT_II"""
-        self._node.get_logger().info("--- 阶段1: 走向交互区-I ---")
-        if not self._mc.move_toward(*INTERACT_I, speed=0.30, timeout=180.0):
+        """三段式进入交互区-I：
+        1. 走到中转点 STAGING
+        2. 在中转点原地转到 FINAL_YAW（面朝交互区-II）
+        3. 倒退泊入 INTERACT_I 圆心"""
+        self._node.get_logger().info("--- 阶段1: 走到中转点 ---")
+        if not self._mc.move_toward(*STAGING, speed=0.30, timeout=120.0):
             return False
-        self._node.get_logger().info("--- 阶段2: 面朝交互区-II ---")
-        return self._mc.rotate_to(FINAL_YAW, timeout=30.0)
+        self._node.get_logger().info("--- 阶段2: 原地转向 ---")
+        if not self._mc.rotate_to(FINAL_YAW, timeout=20.0):
+            return False
+        self._node.get_logger().info("--- 阶段3: 倒退泊入 ---")
+        return self._mc.dock_at(*INTERACT_I, FINAL_YAW, timeout=40.0)
 
     def face(self, target_x: float, target_y: float, timeout: float = 100.0) -> bool:
         if self._mc.position is None:
