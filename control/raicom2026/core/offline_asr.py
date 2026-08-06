@@ -15,23 +15,15 @@ import tempfile
 from pathlib import Path
 
 MODEL_DIR = Path(__file__).resolve().parents[1] / "models" / "asr"
-# SenseVoice 模型路径
-MODEL_PATH = MODEL_DIR / "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
-MODEL_FILES = [
-    "model.onnx",          # ONNX 模型
-    "tokens.txt",          # 词表
-]
 
 
 def _find_model() -> str | None:
-    """找模型目录。"""
-    if MODEL_PATH.is_dir():
-        return str(MODEL_PATH)
-    # 也搜其他可能的模型
-    if MODEL_DIR.is_dir():
-        for d in MODEL_DIR.iterdir():
-            if d.is_dir() and (d / "model.onnx").exists():
-                return str(d)
+    """搜模型目录（含 model.onnx + tokens.txt）。"""
+    if not MODEL_DIR.is_dir():
+        return None
+    for d in MODEL_DIR.iterdir():
+        if d.is_dir() and (d / "model.onnx").exists() and (d / "tokens.txt").exists():
+            return str(d)
     return None
 
 
@@ -50,7 +42,7 @@ def download_model():
     with tarfile.open(str(fname), "r:bz2") as tar:
         tar.extractall(str(MODEL_DIR))
     os.remove(str(fname))
-    print(f"模型已就绪: {MODEL_PATH}")
+    print(f"模型已就绪: {MODEL_DIR}")
 
 
 class OfflineASR:
