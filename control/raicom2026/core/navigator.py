@@ -208,57 +208,10 @@ class Navigator:
         return self._mc.rotate_to(yaw, timeout=timeout)
 
     def dock_for_grasp(self, object_xyz, hand: str) -> bool:
-        """参考 raicom_project align_to_table：转到面朝桌子，前进对准。"""
+        """精确泊入桌子前：转到面朝桌子 → dock_at 倒退到位。"""
         object_x, object_y, _ = object_xyz
-        # 面朝桌子 (+x, yaw≈0)
-        self._node.get_logger().info("转到面朝桌子")
-        if not self._mc.rotate_to(0.0, timeout=20.0):
-            return False
-        # 身体坐标系前后/左右对准
-        self._node.get_logger().info("身体系对准桌子")
-        deadline = time.monotonic() + 90.0
-        import rclpy
-        cnt = 0
-        stable_since = None
-        while time.monotonic() < deadline:
-            rclpy.spin_once(self._node, timeout_sec=0.0)
-            cnt += 1
-            pos = self._mc.position
-            if pos is None or not self._mc.pose_is_fresh():
-                self._mc.publish(0.0)
-                time.sleep(0.01); continue
-            px, py, _ = pos
-            yaw = self._mc.yaw if self._mc.yaw is not None else 0.0
-            # 世界坐标差 → 身体坐标系
-            world_dx = object_x - px - 0.25   # 骨盆离物体 25cm
-            world_dy = object_y - py
-            body_fwd  =  math.cos(yaw) * world_dx + math.sin(yaw) * world_dy
-            body_lat  = -math.sin(yaw) * world_dx + math.cos(yaw) * world_dy
-            yaw_err   = -yaw   # 目标 yaw=0
-            yaw_err   = math.atan2(math.sin(yaw_err), math.cos(yaw_err))
-            # 判定到达（放宽到 15cm + 15°, CPG 步态精度有限）
-            ok = (abs(body_fwd) < 0.15 and abs(body_lat) < 0.15
-                  and abs(yaw_err) < math.radians(15))
-            if ok:
-                if stable_since is None:
-                    stable_since = time.monotonic()
-                elif time.monotonic() - stable_since >= 0.5:
-                    self._mc.stop(1.0)
-                    self._node.get_logger().info("桌子对准完成")
-                    return True
-            else:
-                stable_since = None
-            # 速度命令
-            fwd  = max(-0.15, min(0.15, 0.60 * body_fwd))
-            lat  = max(-0.08, min(0.08, 0.30 * body_lat))
-            ang  = max(-0.25, min(0.25, 1.0 * yaw_err))
-            if cnt % 15 == 0:
-                self._node.get_logger().info(
-                    f"  body_fwd={body_fwd:.2f} body_lat={body_lat:.2f} "
-                    f"yaw_err={math.degrees(yaw_err):.0f}deg"
-                    f"  cmd=({fwd:.2f},{lat:.2f},{ang:+.2f})")
-            self._mc.publish(fwd, ang, lat)
-            time.sleep(0.02)
-        self._node.get_logger().warn("桌子对准超时")
-        self._mc.stop(1.0)
-        return False
+        dock_x = object_x - 0.25  # 骨盆离物体 25cm
+        dock_y = object_y
+
+        self._node.get_logger().info(f"泊入桌子 ({dock_x:.2f}, {dock_y:.2f}) yaw=0")
+        return self._mc.dock_at(dock_x, dock_y, 0.0, timeout=90.0)
