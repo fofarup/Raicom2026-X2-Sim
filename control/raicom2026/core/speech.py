@@ -27,7 +27,7 @@ class SpeechController:
 
     def listen(self, prompt: str = "", duration: float = 5.0) -> str:
         # 桥接模式（容器↔宿主机 ASR）
-        if self._bridge:
+        if self._bridge and os.path.isdir(self._bridge):
             req = os.path.join(self._bridge, "request.txt")
             resp = os.path.join(self._bridge, "response.txt")
             with open(req, "w") as f:
