@@ -61,20 +61,19 @@ class OfflineASR:
         model_path = _find_model()
         if model_path is None:
             print("[ASR] 模型未找到，使用键盘输入回退。")
-            print("[ASR] 运行 download_model() 下载模型。")
+            print("[ASR] 运行 download_model.sh 下载模型。")
             return
         try:
             import sherpa_onnx
-            config = sherpa_onnx.OfflineRecognizerConfig(
-                model=sherpa_onnx.OfflineModelConfig(
-                    sense_voice=sherpa_onnx.OfflineSenseVoiceModelConfig(
-                        model=str(Path(model_path) / "model.onnx"),
-                        tokens=str(Path(model_path) / "tokens.txt"),
-                    ),
-                    tokens=str(Path(model_path) / "tokens.txt"),
-                ),
+            sv = sherpa_onnx.OfflineSenseVoiceModelConfig()
+            sv.model = str(Path(model_path) / "model.onnx")
+            sv.language = "zh"
+            mc = sherpa_onnx.OfflineModelConfig(
+                sense_voice=sv,
+                tokens=str(Path(model_path) / "tokens.txt"),
             )
-            self._recognizer = sherpa_onnx.OfflineRecognizer(config)
+            cfg = sherpa_onnx.OfflineRecognizerConfig(model_config=mc)
+            self._recognizer = sherpa_onnx.offline_recognizer._Recognizer(cfg)
             print("[ASR] SenseVoice 模型已加载")
         except Exception as e:
             print(f"[ASR] 模型加载失败: {e}，回退键盘")
@@ -83,15 +82,16 @@ class OfflineASR:
         """识别 WAV 文件（16kHz, mono, 16-bit）。"""
         if self._recognizer is None:
             return ""
-        import sherpa_onnx
-        audio, sample_rate = sherpa_onnx.read_wave(wav_path)
-        if sample_rate != 16000:
-            print(f"[ASR] 警告: 采样率 {sample_rate}, 需要 16000")
+        import wave
+        import numpy as np
+        with wave.open(wav_path, "rb") as wf:
+            frames = wf.readframes(wf.getnframes())
+            audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+            sr = wf.getframerate()
         stream = self._recognizer.create_stream()
-        stream.accept_waveform(sample_rate, audio)
+        stream.accept_waveform(sr, audio)
         self._recognizer.decode_stream(stream)
-        result = stream.result.text.strip()
-        return result
+        return stream.result.text.strip()
 
     def listen(self, prompt: str = "", duration: float = 5.0) -> str:
         """从麦克风录音 duration 秒，识别后返回文本。
