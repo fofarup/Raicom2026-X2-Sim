@@ -112,7 +112,7 @@ class OfflineASR:
 
         try:
             subprocess.run([
-                "arecord", "-D", "default", "-f", "S16_LE",
+                "arecord", "-D", "pulse", "-f", "S16_LE",
                 "-r", "16000", "-c", "1",
                 "-d", str(int(duration)),
                 wav_path,
