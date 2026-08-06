@@ -213,11 +213,11 @@ class Navigator:
         dock_x = object_x - 0.25
         dock_y = object_y
 
-        # 第一段：走到桌子前方 0.5m 处（粗定位，容差宽）
-        approach_x = dock_x - 0.25
+        # 第一段：走到桌子前方 0.3m 处
+        approach_x = dock_x - 0.30
         approach_y = dock_y
         self._node.get_logger().info(f"粗接近 ({approach_x:.2f}, {approach_y:.2f})")
-        if not self._mc.move_toward(approach_x, approach_y, speed=0.20, tolerance=0.25, timeout=60.0):
+        if not self._mc.move_toward(approach_x, approach_y, speed=0.15, tolerance=0.15, timeout=90.0):
             return False
 
         # 第二段：面朝桌子，dock_at 精确泊入
