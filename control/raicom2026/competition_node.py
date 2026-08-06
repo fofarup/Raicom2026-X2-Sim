@@ -176,7 +176,7 @@ class CompetitionNode(Node):
         self.speech.say(need.response)
         self.transition(CompetitionState.NAVIGATE_WORK_ZONE)
         if not self.navigator.goto(
-                *WORK_ZONE, speed=0.30, timeout=240.0, tolerance=0.12):
+                *WORK_ZONE, speed=0.30, timeout=240.0, tolerance=0.30):
             return False
         # 从安全工作区低速进入抓取停靠位；左/右手各自保留 25 cm 横向偏置。
         if not self.navigator.dock_for_grasp(need.object_world_xyz, self.args.hand):

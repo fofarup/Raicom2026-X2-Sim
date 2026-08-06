@@ -208,10 +208,21 @@ class Navigator:
         return self._mc.rotate_to(yaw, timeout=timeout)
 
     def dock_for_grasp(self, object_xyz, hand: str) -> bool:
-        """精确泊入桌子前：转到面朝桌子 → dock_at 倒退到位。"""
+        """两级接近桌子：先粗走到作业区，再精确泊入。"""
         object_x, object_y, _ = object_xyz
-        dock_x = object_x - 0.25  # 骨盆离物体 25cm
+        dock_x = object_x - 0.25
         dock_y = object_y
 
-        self._node.get_logger().info(f"泊入桌子 ({dock_x:.2f}, {dock_y:.2f}) yaw=0")
-        return self._mc.dock_at(dock_x, dock_y, 0.0, timeout=90.0)
+        # 第一段：走到桌子前方 0.5m 处（粗定位，容差宽）
+        approach_x = dock_x - 0.25
+        approach_y = dock_y
+        self._node.get_logger().info(f"粗接近 ({approach_x:.2f}, {approach_y:.2f})")
+        if not self._mc.move_toward(approach_x, approach_y, speed=0.20, tolerance=0.25, timeout=60.0):
+            return False
+
+        # 第二段：面朝桌子，dock_at 精确泊入
+        self._node.get_logger().info("面朝桌子")
+        if not self._mc.rotate_to(0.0, timeout=20.0):
+            return False
+        self._node.get_logger().info(f"精泊入 ({dock_x:.2f}, {dock_y:.2f})")
+        return self._mc.dock_at(dock_x, dock_y, 0.0, timeout=60.0)
