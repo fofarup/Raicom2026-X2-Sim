@@ -31,7 +31,8 @@ class SpeechController:
         if not self._tts.speak(text):
             self._node.get_logger().warn(f"TTS 无声输出（无模型或无音频设备），仅记录: {text}")
 
-    def listen(self, prompt: str = "", duration: float = 5.0) -> str:
+    def listen(self, prompt: str = "", duration: float = 5.0,
+               context: str | None = None) -> str:
         # 桥接模式（容器↔宿主机 ASR）
         if self._bridge and os.path.isdir(self._bridge):
             req = os.path.join(self._bridge, "request.txt")
@@ -58,4 +59,4 @@ class SpeechController:
             return input("🎤 请输入: ").strip()
 
         # 宿主机 ASR
-        return self._asr.listen(prompt, duration=duration)
+        return self._asr.listen(prompt, duration=duration, context=context)

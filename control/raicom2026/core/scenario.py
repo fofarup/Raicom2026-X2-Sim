@@ -1,6 +1,7 @@
 """比赛输入、意图和状态定义；不依赖 ROS，便于穷举测试。"""
 from dataclasses import dataclass
 from enum import Enum
+import re
 
 
 class CompetitionState(str, Enum):
@@ -19,6 +20,48 @@ class CompetitionState(str, Enum):
 
 EXPRESSIONS = ("悲伤", "睡觉", "愤怒", "快乐", "充电")
 GESTURES = ("挥左手", "挥右手", "左手敬礼", "右手敬礼", "双手打叉")
+
+# ---- 时间意图关键词 ----
+TIME_KEYWORDS = ("几点了", "几点", "现在几点", "时间", "现在时间",
+                 "报时", "告诉我时间", "什么时间", "当前时间")
+
+
+def is_time_question(text: str) -> bool:
+    """判断语音输入是否在问时间。"""
+    return any(kw in text for kw in TIME_KEYWORDS)
+
+
+# ---- 数字/颜色语音解析 ----
+
+# 中文数字 → int
+CN_DIGIT = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+             "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+             "〇": 0}
+CN_COLORS = [
+    "粉色", "青色", "绿色", "黄色", "紫色", "深橙色", "蓝绿色",
+    "蓝色", "浅蓝色", "红色", "深紫色", "靛蓝色", "黄绿色", "橙色", "浅绿色",
+]
+
+
+def parse_number_color(text: str) -> tuple[int | None, str | None]:
+    """从语音文本中提取数字和颜色。如 '数字是5颜色红色' → (5, '红色')。"""
+    digit = None
+    color = None
+    # 数字：先匹配阿拉伯数字，再匹配中文数字
+    m = re.search(r'(\d)', text)
+    if m:
+        digit = int(m.group(1))
+    else:
+        for cn, val in CN_DIGIT.items():
+            if cn in text:
+                digit = val
+                break
+    # 颜色：找最长匹配
+    for c in sorted(CN_COLORS, key=len, reverse=True):
+        if c in text:
+            color = c
+            break
+    return digit, color
 
 
 @dataclass(frozen=True)

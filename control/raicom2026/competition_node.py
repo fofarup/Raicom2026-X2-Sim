@@ -23,6 +23,7 @@ from core.locomotion import InputSource, MotionController
 from core.mode_switch import ModeSwitch
 from core.navigator import INTERACT_I, INTERACT_II, WORK_ZONE, Navigator
 from core.scenario import (EXPRESSIONS, GESTURES, CompetitionState, NEEDS,
+                           is_time_question, parse_number_color,
                            parse_need, validate_draw)
 from core.speech import SpeechController
 from core.vision import RESOURCES_DIR, VisionController
@@ -130,30 +131,60 @@ class CompetitionNode(Node):
         self.speech.say("已进入交互区I并面向交互区II。")
         return True
 
-    def _select(self, supplied: str | None, choices: tuple[str, ...], prompt: str) -> str:
+    def _select(self, supplied: str | None, choices: tuple[str, ...],
+                prompt: str, context: str | None = None) -> str:
         if supplied:
             return supplied
         while True:
-            value = self.speech.listen(f"{prompt}（{' / '.join(choices)}）")
+            value = self.speech.listen(
+                f"{prompt}（{' / '.join(choices)}）", context=context)
             match = next((choice for choice in choices if choice in value), None)
             if match:
                 return match
             self.speech.say("输入未匹配，请重试。")
 
     def task2(self) -> bool:
+        """国赛任务2：时间问答 → 数字颜色识别 → 表情 → 动作。
+
+        规则验收项（共35分）：
+          正确回答时间(7) 正确识别数字(6) 正确识别颜色(5)
+          显示正确表情(7) 执行正确动作(7) 播报动作名称(3)
+        """
         self.transition(CompetitionState.BASIC_INTERACTION)
-        now = datetime.datetime.now()
-        self.speech.say(f"现在是{now.hour}点{now.minute}分。")
+
+        # ── 1. 时间问答（7分）──
+        #    队员语音提问 → 识别时间意图 → 回答系统本地时间
+        self.speech.say("请向我提问。")
+        time_q = self._listen_until("时间提问", max_retries=3)
+        if is_time_question(time_q):
+            now = datetime.datetime.now()
+            self.speech.say(f"现在是{now.hour}点{now.minute}分。")
+        else:
+            self.get_logger().warn(f"未检测到时间意图，输入: {time_q!r}")
+
+        # ── 2. 数字颜色识别（11分）──
+        #    队员出示卡片，机器人视觉识别 + 语音播报结果
         try:
             result = self.vision.recognize_number()
         except Exception as exc:
             self.get_logger().error(f"数字识别失败: {exc}")
             return False
-        self.speech.say(f"图中的数字是{result['digit']}，颜色是{result['color']}。")
-        expression = self._select(self.args.expression, EXPRESSIONS, "请输入抽中的表情")
-        gesture = self._select(self.args.gesture, GESTURES, "请输入抽中的动作")
-        validate_draw(expression, gesture, self.args.hand)
+        self.speech.say(
+            f"图中的数字是{result['digit']}，颜色是{result['color']}。")
+
+        # ── 3. 表情（7分）──
+        #    队员语音说出抽签结果 → 机器人显示对应表情
+        expression = self._select(
+            self.args.expression, EXPRESSIONS, "请输入抽中的表情",
+            context="表情")
         self.expression.show(expression)
+
+        # ── 4. 动作（10分）──
+        #    队员说出动作名 → 播报动作名称(3分) → 执行动作(7分)
+        gesture = self._select(
+            self.args.gesture, GESTURES, "请输入抽中的动作",
+            context="动作")
+        validate_draw(expression, gesture, self.args.hand)
         self.speech.say(f"我正在执行{gesture}动作。")
         if not self.mode.set("US"):
             return False
@@ -161,8 +192,17 @@ class CompetitionNode(Node):
             return False
         if not self.gesture.return_to_ready():
             return False
-        # Task 3 starts with locomotion, so hand lower-body control back to LD.
+        # Task 3 需要行走，把下半身控制权还给 LD
         return self.mode.set("LD")
+
+    def _listen_until(self, what: str, max_retries: int = 3) -> str:
+        """反复听直到有人说话，最多 *max_retries* 次。"""
+        for attempt in range(max_retries):
+            value = self.speech.listen(f"{what}（第{attempt+1}/{max_retries}次）")
+            if value.strip():
+                return value.strip()
+            self.get_logger().warn(f"{what}: 未收到语音输入")
+        return ""
 
     def task3(self) -> bool:
         self.transition(CompetitionState.UNDERSTAND_NEED)
