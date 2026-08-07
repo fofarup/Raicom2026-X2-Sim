@@ -3,6 +3,7 @@
 - 宿主机(--sim or --asr-bridge)：麦克风 + SenseVoice 离线 ASR
 - 容器(Docker)：自动检测 ASR_BRIDGE_DIR 桥接
 - 回退：键盘输入
+- TTS：自研实现（离线 piper 优先，云端 edge-tts 可选），比赛禁用官方 TTS
 """
 
 import os
@@ -10,6 +11,7 @@ import time
 
 from rclpy.node import Node
 from .offline_asr import get_asr
+from .tts import TTSController
 
 
 class SpeechController:
@@ -21,9 +23,13 @@ class SpeechController:
             self._asr = get_asr()
         else:
             self._asr = None
+        self._tts = TTSController()
 
     def say(self, text: str):
         self._node.get_logger().info(f"[TTS] {text}")
+        # 自研 TTS：合成并播放；无模型/无音频设备时降级为仅日志
+        if not self._tts.speak(text):
+            self._node.get_logger().warn(f"TTS 无声输出（无模型或无音频设备），仅记录: {text}")
 
     def listen(self, prompt: str = "", duration: float = 5.0) -> str:
         # 桥接模式（容器↔宿主机 ASR）

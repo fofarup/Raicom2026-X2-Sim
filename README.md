@@ -38,7 +38,7 @@
 | 限时 | 20 分钟，最多 2 次运行 |
 | 总分 | 基础 100 分 + 附加 50 分（自主建图导航） |
 | 任务数 | 3 个，顺序连续执行，一次指令全自主 |
-| 语音 | 禁止使用机器人自带大模型，必须自行接入 |
+| 语音 | 禁止官方大模型；ASR 豁免云端限制可接云端；TTS 必须自研（禁用官方 TTS） |
 | 控制 | 禁止遥控、键盘、手柄、中途 Reset |
 
 ### 技术栈
@@ -98,6 +98,7 @@ x2_biao/
 │       │   ├── navigator.py        # TF/激光定位 + A* 路径规划 + 泊车
 │       │   ├── mapping.py          # 空白激光建图 + 碰撞监测
 │       │   ├── speech.py           # 语音抽象层（仿真键盘 / 真机 ASR-TTS）
+│       │   ├── tts.py              # 自研 TTS（piper 离线 + edge-tts 云端）
 │       │   ├── vision.py           # 数字颜色识别（模板匹配 + 15 色色板）
 │       │   ├── grasp.py            # IK 求解 + 手臂轨迹 + 夹爪抓取流程
 │       │   ├── gesture.py          # 五种抽签手势的双臂关节轨迹
@@ -336,9 +337,9 @@ python3 competition_node.py \
 | `--need` | 文本 | — | 预设需求文本 |
 | `--hand` | left / right | right | 抓取使用的手 |
 
-### 4.6 离线语音识别（SenseVoice）
+### 4.6 离线语音交互（SenseVoice ASR + 自研 TTS）
 
-模型下载（一次性，~900MB）：
+模型下载（一次性，~960MB：ASR 895MB + TTS 61MB）：
 
 ```bash
 cd ~/x2_ws/x2_biao/control/raicom2026
@@ -374,6 +375,19 @@ python3 competition_node.py
 ```
 
 看到 `🎤 录音 X 秒...` 或 `🎤 请说话...` 时直接说话，无需按键。
+
+**自研 TTS（比赛规则要求：语音合成必须自行完成，禁止官方 TTS）**：
+
+```bash
+# 依赖（模型已由 download_model.sh 下载到 models/tts/）
+pip3 install piper-tts edge-tts
+
+# 离线引擎（默认）：piper 中文女声，完全本地合成，比赛零网络风险
+# 云端引擎（可选）：edge-tts，音质接近真人，现场连接公共网络时可用
+# 切换：TTSController(prefer="local"|"cloud"|"auto")；无音频设备自动降级为日志
+```
+
+任务 2 播报动作名、任务 3 语音应答与抓取播报均自动经 TTS 发声。
 
 ### 4.7 国赛真机使用
 
@@ -493,7 +507,8 @@ PREPARE → WAIT_START → NAVIGATE_INTERACTION_I → FACE_INTERACTION_II
 
 ### 5.9 core/speech.py / core/expression.py / core/scenario.py
 
-- **speech.py**：`--sim` 模式用键盘输入+print 日志；真机接入 ASR/TTS API
+- **speech.py**：`--sim` 模式用键盘输入+print 日志；真机接入自研 ASR + TTS（`say()` 真发声）
+- **tts.py**：自研 TTS（比赛规则要求，禁用官方 TTS）；piper 离线优先 / edge-tts 云端可选，无扬声器自动降级日志
 - **expression.py**：7 种表情（快乐/悲伤/愤怒/睡觉/充电/疑惑/平静-卖萌）
 - **scenario.py**：竞赛状态枚举、需求映射（3 种需求+关键词）、抽签校验
 
@@ -645,7 +660,7 @@ python3 tests/test_mapping.py
 | 数字识别不准确 | 检查 `resources/numbers/` 下 63 张图片是否完整 |
 | 需求匹配失败 | 检查 `scenario.py` 中 NEEDS 关键词是否覆盖官方表述 |
 | IK 求解不收敛 | 确认 URDF 模型加载成功，检查手臂状态反馈 |
-| 语音交互不可用 | 真机需自行接入 ASR/TTS；仿真用 `--sim` 键盘模拟 |
+| 语音交互不可用 | 检查 `models/asr/` 与 `models/tts/` 是否齐全（`bash download_model.sh`）；无扬声器时 TTS 自动降级为日志；仿真用 `--sim` 键盘模拟 |
 | 激光建图失败 | 确认激光插件编译成功，检查 `build_lidar_plugin.sh` |
 
 ---
