@@ -16,6 +16,7 @@
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import wave
 from pathlib import Path
@@ -81,8 +82,9 @@ class TTSController:
         """edge-tts 云端合成，返回 mp3/wav 路径。需要网络。"""
         out = tempfile.mktemp(suffix=".mp3")
         try:
+            # 用 python -m 而非 edge-tts 命令，避免 .local/bin 不在 PATH
             proc = subprocess.run(
-                ["edge-tts", "--voice", self._cloud_voice,
+                [sys.executable, "-m", "edge_tts", "--voice", self._cloud_voice,
                  "--text", text, "--write-media", out],
                 capture_output=True, timeout=60,
             )
