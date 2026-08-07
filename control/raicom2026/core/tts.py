@@ -67,11 +67,9 @@ class TTSController:
         wav = tempfile.mktemp(suffix=".wav")
         try:
             with wave.open(wav, "wb") as f:
-                synth = getattr(self._voice, "synthesize_wav", None)
-                if synth is not None:
-                    synth(text, f)          # piper >= 1.2
-                else:
-                    self._voice.synthesize(text, f)  # 旧版 API
+                # piper >= 1.2 synthesize_wav(text, wav_file)
+                # set_wav_format 默认 True，自动设 channels/rate/width
+                self._voice.synthesize_wav(text, f)
             return wav if os.path.getsize(wav) > 2000 else None
         except Exception as e:
             print(f"[TTS] piper 合成失败: {e}")

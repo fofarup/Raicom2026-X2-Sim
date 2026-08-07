@@ -1,7 +1,10 @@
-"""离线语音识别 — sherpa-onnx SenseVoice + Silero VAD。
+"""语音识别 — 云端讯飞流式优先，本地 SenseVoice 保底。
 
+链路（比赛规则豁免语音交互接云端）：
+  麦克风 → VAD 短静默切段(0.5s) → 讯飞流式识别(~0.5s) → 结果
+  讯飞失败/断网 → 回退本地 SenseVoice(CPU 2-3s)
 VAD (Voice Activity Detection): 自动检测说话开始/结束，无需固定时长。
-如果 VAD 模型不可用，回退固定 5 秒录音。
+如果 VAD 模型不可用，回退固定 4 秒录音。
 如果 ASR 模型不可用，回退键盘输入。
 """
 
@@ -12,6 +15,8 @@ import wave
 import tempfile
 import numpy as np
 from pathlib import Path
+
+from .cloud_asr import CloudASR
 
 MODEL_DIR = Path(__file__).resolve().parents[1] / "models" / "asr"
 
@@ -38,34 +43,37 @@ class OfflineASR:
     def __init__(self):
         self._recognizer = None
         self._vad = None
+        self._cloud = CloudASR()
+        if self._cloud.available():
+            print("[ASR] 讯飞云端识别已加载")
         model_path = _find_model()
         if model_path is None:
-            print("[ASR] 模型未找到，使用键盘输入回退。")
-            return
-        try:
-            import sherpa_onnx
-            sv = sherpa_onnx.OfflineSenseVoiceModelConfig()
-            sv.model = str(Path(model_path) / "model.onnx")
-            sv.language = "zh"
-            mc = sherpa_onnx.OfflineModelConfig(
-                sense_voice=sv,
-                tokens=str(Path(model_path) / "tokens.txt"),
-            )
-            cfg = sherpa_onnx.OfflineRecognizerConfig(model_config=mc)
-            self._recognizer = sherpa_onnx.offline_recognizer._Recognizer(cfg)
-            print("[ASR] SenseVoice 已加载")
+            print("[ASR] 本地模型未找到，仅云端模式。")
+        else:
+            try:
+                import sherpa_onnx
+                sv = sherpa_onnx.OfflineSenseVoiceModelConfig()
+                sv.model = str(Path(model_path) / "model.onnx")
+                sv.language = "zh"
+                mc = sherpa_onnx.OfflineModelConfig(
+                    sense_voice=sv,
+                    tokens=str(Path(model_path) / "tokens.txt"),
+                )
+                cfg = sherpa_onnx.OfflineRecognizerConfig(model_config=mc)
+                self._recognizer = sherpa_onnx.offline_recognizer._Recognizer(cfg)
+                print("[ASR] SenseVoice 已加载")
 
-            # VAD
-            vad_path = _find_vad_model()
-            if vad_path:
-                import sherpa_onnx as so
-                svc = so.SileroVadModelConfig(model=vad_path, threshold=0.5,
-                    min_silence_duration=1.2, min_speech_duration=0.3)
-                vc = so.VadModelConfig(silero_vad=svc, sample_rate=16000)
-                self._vad = so.VoiceActivityDetector(vc, buffer_size_in_seconds=30)
-                print("[ASR] Silero VAD 已加载")
-        except Exception as e:
-            print(f"[ASR] 模型加载失败: {e}，回退键盘")
+                # VAD（0.5s 静默即切段，压响应延迟）
+                vad_path = _find_vad_model()
+                if vad_path:
+                    import sherpa_onnx as so
+                    svc = so.SileroVadModelConfig(model=vad_path, threshold=0.5,
+                        min_silence_duration=0.5, min_speech_duration=0.3)
+                    vc = so.VadModelConfig(silero_vad=svc, sample_rate=16000)
+                    self._vad = so.VoiceActivityDetector(vc, buffer_size_in_seconds=30)
+                    print("[ASR] Silero VAD 已加载")
+            except Exception as e:
+                print(f"[ASR] 模型加载失败: {e}，仅云端模式")
 
     def recognize_file(self, wav_path: str) -> str:
         """识别 WAV 文件（16kHz, mono, 16-bit）。"""
@@ -89,7 +97,7 @@ class OfflineASR:
             print(f"\n🤖 {prompt}")
 
         # 录音（parec → raw PCM）
-        max_dur = 6
+        max_dur = 4
         raw_full = tempfile.mktemp(suffix=".raw")
         print(f"🎤 录音 {max_dur}s（说话自动检测）...")
         os.system(
@@ -110,8 +118,8 @@ class OfflineASR:
         # 用 VAD 找语音段
         import sherpa_onnx as so
         vad_path = _find_vad_model()
-        svc = so.SileroVadModelConfig(model=vad_path, threshold=0.4,
-            min_silence_duration=1.0, min_speech_duration=0.3)
+        svc = so.SileroVadModelConfig(model=vad_path, threshold=0.5,
+            min_silence_duration=0.5, min_speech_duration=0.3)
         vc = so.VadModelConfig(silero_vad=svc, sample_rate=16000)
         vad = so.VoiceActivityDetector(vc, buffer_size_in_seconds=30)
 
@@ -166,8 +174,9 @@ class OfflineASR:
         return wav
 
     def listen(self, prompt: str = "", duration: float = 5.0) -> str:
-        """语音输入。VAD > 固定时长 > 键盘。"""
-        if self._recognizer is None and self._vad is None:
+        """语音输入。讯飞云端 > 本地 SenseVoice > 键盘。"""
+        cloud_ok = self._cloud is not None and self._cloud.available()
+        if self._recognizer is None and not cloud_ok:
             if prompt:
                 print(f"\n🤖 {prompt}")
             return input("🎤 请输入: ").strip()
@@ -178,11 +187,21 @@ class OfflineASR:
             wav_path = self._record_vad(prompt)
         # 回退固定时长（VAD 失败后等 PulseAudio 释放设备）
         if wav_path is None and self._recognizer is not None:
-            time.sleep(0.5)
+            time.sleep(0.3)
             wav_path = self._record_fixed(duration)
 
         if wav_path is not None:
             try:
+                # 1) 讯飞云端流式识别（快+准，~0.5s）
+                if cloud_ok:
+                    with wave.open(wav_path, "rb") as wf:
+                        frames = wf.readframes(wf.getnframes())
+                    text = self._cloud.recognize(frames)
+                    if text:
+                        print(f"🎤 识别: {text}")
+                        return text
+                    print("[ASR] 云端失败，回退本地...")
+                # 2) 本地 SenseVoice 保底
                 result = self.recognize_file(wav_path)
                 if result:
                     print(f"🎤 识别: {result}")

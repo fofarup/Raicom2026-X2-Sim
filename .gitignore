@@ -11,3 +11,4 @@ __pycache__/
 *.pyo
 models/
 .asr_bridge
+config/asr_keys.json
