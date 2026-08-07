@@ -24,6 +24,10 @@ BRIDGE_DIR = os.environ.get("ASR_BRIDGE_DIR",
 
 
 def main():
+    # 桥接是后台进程，无交互终端：识别失败时 listen() 内部的 input()
+    # 会永远阻塞。重定向 stdin 让 input() 立即 EOF 返回空串。
+    sys.stdin = open(os.devnull)
+
     os.makedirs(BRIDGE_DIR, exist_ok=True)
     asr = get_asr()
     if asr._recognizer is None:
