@@ -23,8 +23,8 @@ from core.locomotion import InputSource, MotionController
 from core.mode_switch import ModeSwitch
 from core.navigator import INTERACT_I, INTERACT_II, WORK_ZONE, Navigator
 from core.scenario import (EXPRESSIONS, GESTURES, CompetitionState, NEEDS,
-                           is_time_question, parse_number_color,
-                           parse_need, validate_draw)
+                           is_confirmed, is_denied, is_nav_command,
+                           is_time_question, parse_need, validate_draw)
 from core.speech import SpeechController
 from core.vision import RESOURCES_DIR, VisionController
 
@@ -123,6 +123,10 @@ class CompetitionNode(Node):
 
     def task1(self) -> bool:
         self.transition(CompetitionState.NAVIGATE_INTERACTION_I)
+        # 队员语音指令触发导航（反复问直到收到指令）
+        cmd = self._listen_loop("请下达任务指令（前往交互区一）",
+                                validator=is_nav_command,
+                                fail_prompt="未识别到导航指令，请再说一次")
         self.speech.say("正在自主导航至交互区I。")
         # 三段式：中转点→转向→倒退泊入
         if not self.navigator.task1_enter_zone():
@@ -133,6 +137,7 @@ class CompetitionNode(Node):
 
     def _select(self, supplied: str | None, choices: tuple[str, ...],
                 prompt: str, context: str | None = None) -> str:
+        """语音选择 + 反问确认 + 无限重试直到确认。"""
         if supplied:
             return supplied
         while True:
@@ -140,8 +145,33 @@ class CompetitionNode(Node):
                 f"{prompt}（{' / '.join(choices)}）", context=context)
             match = next((choice for choice in choices if choice in value), None)
             if match:
-                return match
+                if self._confirm(match):
+                    return match
+                continue
             self.speech.say("输入未匹配，请重试。")
+
+    def _confirm(self, item: str) -> bool:
+        """反问确认：'你说的是XX，对吗？'，等队员确认/否认。"""
+        self.speech.say(f"你说的是{item}，对吗？")
+        while True:
+            resp = self.speech.listen(context="确认")
+            if is_confirmed(resp):
+                return True
+            if is_denied(resp):
+                return False
+            self.speech.say("请说对或不对。")
+
+    def _listen_loop(self, prompt: str,
+                     validator=lambda v: bool(v.strip()),
+                     fail_prompt: str = "未识别，请重试") -> str:
+        """反复听直到获得有效输入。"""
+        first = True
+        while True:
+            p = prompt if first else fail_prompt
+            value = self.speech.listen(p)
+            if validator(value):
+                return value.strip()
+            first = False
 
     def task2(self) -> bool:
         """国赛任务2：时间问答 → 数字颜色识别 → 表情 → 动作。
@@ -155,12 +185,11 @@ class CompetitionNode(Node):
         # ── 1. 时间问答（7分）──
         #    队员语音提问 → 识别时间意图 → 回答系统本地时间
         self.speech.say("请向我提问。")
-        time_q = self._listen_until("时间提问", max_retries=3)
-        if is_time_question(time_q):
-            now = datetime.datetime.now()
-            self.speech.say(f"现在是{now.hour}点{now.minute}分。")
-        else:
-            self.get_logger().warn(f"未检测到时间意图，输入: {time_q!r}")
+        time_q = self._listen_loop(
+            "请问现在几点了？", validator=is_time_question,
+            fail_prompt="未识别到时间问题，请再问一次")
+        now = datetime.datetime.now()
+        self.speech.say(f"现在是{now.hour}点{now.minute}分。")
 
         # ── 2. 数字颜色识别（11分）──
         #    队员出示卡片，机器人视觉识别 + 语音播报结果
@@ -195,22 +224,16 @@ class CompetitionNode(Node):
         # Task 3 需要行走，把下半身控制权还给 LD
         return self.mode.set("LD")
 
-    def _listen_until(self, what: str, max_retries: int = 3) -> str:
-        """反复听直到有人说话，最多 *max_retries* 次。"""
-        for attempt in range(max_retries):
-            value = self.speech.listen(f"{what}（第{attempt+1}/{max_retries}次）")
-            if value.strip():
-                return value.strip()
-            self.get_logger().warn(f"{what}: 未收到语音输入")
-        return ""
-
     def task3(self) -> bool:
         self.transition(CompetitionState.UNDERSTAND_NEED)
-        text = self.args.need or self.speech.listen("请模拟说出养老服务需求")
-        need = parse_need(text)
-        if need is None:
-            self.speech.say("抱歉，我没有听清需求，请再说一次。")
-            need = parse_need(self.speech.listen("请重新表达需求"))
+        if self.args.need:
+            need = parse_need(self.args.need)
+        else:
+            text = self._listen_loop(
+                "请说出您的养老服务需求",
+                validator=lambda v: parse_need(v) is not None,
+                fail_prompt="未识别到需求（头疼/口渴/饥饿），请再说一次")
+            need = parse_need(text)
         if need is None:
             return False
         self.speech.say(need.response)

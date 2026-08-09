@@ -21,14 +21,38 @@ class CompetitionState(str, Enum):
 EXPRESSIONS = ("悲伤", "睡觉", "愤怒", "快乐", "充电")
 GESTURES = ("挥左手", "挥右手", "左手敬礼", "右手敬礼", "双手打叉")
 
+# ---- 导航意图关键词 ----
+NAV_KEYWORDS = ("前往交互区", "去交互区", "开始导航", "开始任务",
+                "前往交互区一", "前往交互区1", "导航到交互区")
+
 # ---- 时间意图关键词 ----
 TIME_KEYWORDS = ("几点了", "几点", "现在几点", "时间", "现在时间",
                  "报时", "告诉我时间", "什么时间", "当前时间")
+
+# ---- 确认/否认关键词 ----
+CONFIRM_KEYWORDS = ("对", "是的", "确认", "正确", "没错", "好的",
+                    "可以", "行", "嗯", "对的", "是")
+DENY_KEYWORDS = ("不对", "不是", "错了", "不对的", "不", "错", "重新")
+
+
+def is_nav_command(text: str) -> bool:
+    """判断语音输入是否为导航指令。"""
+    return any(kw in text for kw in NAV_KEYWORDS)
 
 
 def is_time_question(text: str) -> bool:
     """判断语音输入是否在问时间。"""
     return any(kw in text for kw in TIME_KEYWORDS)
+
+
+def is_confirmed(text: str) -> bool:
+    """判断语音输入是否为确认。"""
+    return any(kw in text for kw in CONFIRM_KEYWORDS)
+
+
+def is_denied(text: str) -> bool:
+    """判断语音输入是否为否认。"""
+    return any(kw in text for kw in DENY_KEYWORDS)
 
 
 # ---- 数字/颜色语音解析 ----
