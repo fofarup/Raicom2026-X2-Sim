@@ -4,6 +4,11 @@
 
 本仓库包含从零搭建 X2 人形机器人仿真环境到完成国赛全部三个任务的完整代码、工具、测试和文档。
 
+真机现场部署快照位于 [`real_robot/`](real_robot/)。它与仿真控制代码隔离，包含
+X2 ROS 2/AimDK 接口适配、Task 1/2/3、语音链路、重定位和部署脚本。迁移到另一台
+X2 前请先阅读 [`real_robot/MIGRATION_GUIDE.md`](real_robot/MIGRATION_GUIDE.md)；
+仓库不包含真实 API 密钥、现场私有配置或大型 ASR 权重。
+
 ---
 
 ## 目录

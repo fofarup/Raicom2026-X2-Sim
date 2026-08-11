@@ -1,0 +1,100 @@
+{
+  "profile_name": "real_robot",
+  "robot_kind": "real",
+  "runtime": {
+    "ros_domain_id": null,
+    "rmw_implementation": "rmw_fastrtps_cpp",
+    "ros_setup_path": "/opt/ros/humble/setup.bash",
+    "aimdk_setup_path": "/home/agi/aimdk/install/setup.bash"
+  },
+  "topics": {
+    "localization_pose": "/slam/lidar_odom",
+    "localization_pose_type": "nav_msgs/msg/Odometry",
+    "odometry": "/aima/hal/odom/state",
+    "locomotion_velocity": "/aima/mc/locomotion/velocity",
+    "speech_text": "/raicom/speech/text",
+    "vad_audio": "/agent/process_audio_output",
+    "audio_playback": "/aima/hal/audio/playback",
+    "audio_focus_response": "/aima/hal/audio/focus_response"
+  },
+  "services": {
+    "mc_action": "/aimdk_5Fmsgs/srv/SetMcAction",
+    "mc_input_source": "/aimdk_5Fmsgs/srv/SetMcInputSource",
+    "preset_motion": "/aimdk_5Fmsgs/srv/SetMcPresetMotion",
+    "play_emoji": "/aimdk_5Fmsgs/srv/PlayEmoji",
+    "audio_focus_request": "/aimdk_5Fmsgs/srv/RequestAudioFocus",
+    "audio_focus_release": "/aimdk_5Fmsgs/srv/AbandonAudioFocus"
+  },
+  "audio": {
+    "input_backend": "x2_vad_pcm",
+    "output_backend": "x2_audio_playback",
+    "sample_rate": 16000,
+    "sample_format": "S16LE",
+    "channels": 1,
+    "playback_gain": 2.0,
+    "tts_command_json": null
+  },
+  "navigation": {
+    "zones": {
+      "出发区": null,
+      "交互区-I": null,
+      "交互区-II": null,
+      "作业区": null
+    },
+    "task1_turn_drift_precompensation_x_m": null,
+    "task1_final_yaw_deg": null,
+    "task1_turn_precomp_xy": null,
+    "task1_turn_point_xy": null,
+    "task1_preturn_xy": null,
+    "task1_interaction_dock_offset_y_m": null,
+    "task1_interaction_dock_offset_x_m": 0.0,
+    "start_yaw_deg": null,
+    "work_position_tolerance_m": 0.10,
+    "table_position_xy": null,
+    "footprint_dock_offset_y_m": null,
+    "footprint_dock_tolerance_m": 0.08,
+    "prealign_position_tolerance_m": 0.05,
+    "max_table_realign_attempts": 2,
+    "max_safe_zone_distance_m": 0.30,
+    "realign_lateral_trigger_m": null,
+    "max_uncorrectable_lateral_m": 0.12,
+    "supports_lateral_velocity": null,
+    "max_forward_velocity_mps": null,
+    "max_lateral_velocity_mps": null,
+    "max_angular_velocity_rps": null
+  },
+  "vision_cloud": {
+    "provider": "volcengine_ark",
+    "base_url": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+    "model": "",
+    "api_key_file": "/home/agi/x2_deploy_workspace/raicom_real_robot/app/config/doubao_api_key",
+    "timeout_seconds": 25,
+    "max_image_width": 640,
+    "jpeg_quality": 82,
+    "min_confidence": 0.55
+  },
+  "hardware": {
+    "rgb_topic": "/aima/hal/sensor/rgbd_head_front/rgb_image",
+    "depth_topic": "/aima/hal/sensor/rgbd_head_front/depth_image",
+    "camera_info_topic": "/aima/hal/sensor/rgbd_head_front/rgb_camera_info",
+    "depth_camera_info_topic": "/aima/hal/sensor/rgbd_head_front/depth_camera_info",
+    "arm_state_topic": "/aima/hal/joint/arm/state",
+    "upper_body_command_topic": "/mc/upper_body_command",
+    "gripper_command_topic": "/aima/hal/joint/hand/command",
+    "gripper_command_type": "aimdk_msgs/msg/HandCommandArray",
+    "gripper_state_topic": "/aima/hal/joint/hand/state",
+    "gripper_state_type": "aimdk_msgs/msg/HandStateArray",
+    "microphone_device": null,
+    "speaker_device": null
+  },
+  "grasp": {
+    "calibrated": false,
+    "direct_hand_control_requires_mc_stopped": true,
+    "voice_execute_upper_body_grasp": false,
+    "upper_body_mode_settle_seconds": null,
+    "upper_body_takeover_hold_seconds": null,
+    "joint_tracking_tolerance_rad": null,
+    "ee_tracking_tolerance_m": null,
+    "camera_to_robot_transform": null
+  }
+}
