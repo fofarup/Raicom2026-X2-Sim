@@ -13,7 +13,7 @@ import sys
 import time
 import rclpy
 from rclpy.node import Node
-from aimdk_msgs.msg import RequestHeader
+from aimdk_msgs.msg import CommonRequest
 from aimdk_msgs.srv import PlayEmoji
 
 EMOTIONS = {
@@ -45,7 +45,7 @@ class ExpressionTester(Node):
             return False
 
         req = PlayEmoji.Request()
-        req.header = RequestHeader()
+        req.header = CommonRequest()
         req.emotion_id = eid
         req.mode = 1          # EMOTION_MODE_ONCE
         req.priority = 50

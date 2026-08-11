@@ -3,7 +3,7 @@
 import time
 import rclpy
 from rclpy.node import Node
-from aimdk_msgs.msg import CommonState, RequestHeader
+from aimdk_msgs.msg import CommonState, CommonRequest
 from aimdk_msgs.srv import GetMcAction, SetMcAction
 
 
@@ -60,7 +60,7 @@ class ModeSwitch:
             self._node.get_logger().error("SetMcAction 服务不可用")
             return False
         req = SetMcAction.Request()
-        req.header = RequestHeader()
+        req.header = CommonRequest()
         # MC 模式服务使用官方控制源 rc；它与速度消息的输入源注册彼此独立。
         req.source = "rc"
         req.command.action_desc = MODES[mode]

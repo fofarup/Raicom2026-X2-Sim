@@ -1,7 +1,7 @@
 """表情控制模块。仿真用 emoji 日志，真机通过 PlayEmoji 服务控制 X2 屏幕。"""
 
 from rclpy.node import Node
-from aimdk_msgs.msg import RequestHeader
+from aimdk_msgs.msg import CommonRequest
 from aimdk_msgs.srv import PlayEmoji
 
 # 比赛五种表情 → PlayEmoji 枚举值
@@ -48,7 +48,7 @@ class ExpressionController:
             return
 
         req = PlayEmoji.Request()
-        req.header = RequestHeader()
+        req.header = CommonRequest()
         req.emotion_id = emotion_id
         req.mode = 1          # EMOTION_MODE_ONCE
         req.priority = 50
