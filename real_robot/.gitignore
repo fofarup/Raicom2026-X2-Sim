@@ -1,0 +1,12 @@
+config/real_robot.json
+app/config/real_robot.json
+app/config/doubao_api_key
+app/config/*_api_key
+app/config/*.secret
+app/models/
+.backup/
+__pycache__/
+*.py[cod]
+*.tar.zst
+.env
+.env.*
